@@ -1,0 +1,45 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+venv/
+env/
+.venv
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Data Science
+*.csv
+*.h5
+*.pkl
+*.joblib
+*.model
+*.weights
+wandb/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Build outputs
+/frontend/build
