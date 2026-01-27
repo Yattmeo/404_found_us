@@ -1,0 +1,168 @@
+[
+  {
+    "card_type": "Credit",
+    "product": "Small Ticket Fee Program (All)",
+    "mcc": null,
+    "mcc_category": null,
+    "percent_rate": 0.018,
+    "fixed_rate": 0.02
+  },
+  {
+    "card_type": "Super Premium Credit",
+    "product": "Small Ticket Fee Program (All)",
+    "mcc": null,
+    "mcc_category": null,
+    "percent_rate": 0.023,
+    "fixed_rate": 0.02
+  },
+  {
+    "card_type": "Debit",
+    "product": "Small Ticket Fee Program (All)",
+    "mcc": null,
+    "mcc_category": null,
+    "percent_rate": 0.0105,
+    "fixed_rate": 0.15
+  },
+  {
+    "card_type": "Prepaid",
+    "product": "Small Ticket Fee Program (All)",
+    "mcc": null,
+    "mcc_category": null,
+    "percent_rate": 0.0105,
+    "fixed_rate": 0.15
+  },
+
+  {
+    "card_type": "Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5499,
+    "mcc_category": null,
+    "percent_rate": 0.018,
+    "fixed_rate": 0.04
+  },
+  {
+    "card_type": "Super Premium Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5499,
+    "mcc_category": null,
+    "percent_rate": 0.023,
+    "fixed_rate": 0.04
+  },
+  {
+    "card_type": "Debit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5499,
+    "mcc_category": null,
+    "percent_rate": 0.016,
+    "fixed_rate": 0.15
+  },
+  {
+    "card_type": "Prepaid",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5499,
+    "mcc_category": null,
+    "percent_rate": 0.016,
+    "fixed_rate": 0.15
+  },
+
+  {
+    "card_type": "Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 4121,
+    "mcc_category": null,
+    "percent_rate": 0.0175,
+    "fixed_rate": 0.10
+  },
+  {
+    "card_type": "Super Premium Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 4121,
+    "mcc_category": null,
+    "percent_rate": 0.023,
+    "fixed_rate": 0.10
+  },
+  {
+    "card_type": "Debit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 4121,
+    "mcc_category": null,
+    "percent_rate": 0.016,
+    "fixed_rate": 0.15
+  },
+  {
+    "card_type": "Prepaid",
+    "product": "Industry Fee Program (All)",
+    "mcc": 4121,
+    "mcc_category": null,
+    "percent_rate": 0.016,
+    "fixed_rate": 0.15
+  },
+
+  {
+    "card_type": "Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5411,
+    "mcc_category": null,
+    "percent_rate": 0.016,
+    "fixed_rate": 0.10
+  },
+  {
+    "card_type": "Super Premium Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5411,
+    "mcc_category": null,
+    "percent_rate": 0.021,
+    "fixed_rate": 0.10
+  },
+  {
+    "card_type": "Debit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5411,
+    "mcc_category": null,
+    "percent_rate": 0.0105,
+    "fixed_rate": 0.15,
+    "max_fee": 0.35
+  },
+  {
+    "card_type": "Prepaid",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5411,
+    "mcc_category": null,
+    "percent_rate": 0.0105,
+    "fixed_rate": 0.15,
+    "max_fee": 0.35
+  },
+
+  {
+    "card_type": "Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5812,
+    "mcc_category": null,
+    "percent_rate": 0.018,
+    "fixed_rate": 0.10
+  },
+  {
+    "card_type": "Super Premium Credit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5812,
+    "mcc_category": null,
+    "percent_rate": 0.020,
+    "fixed_rate": 0.10
+  },
+  {
+    "card_type": "Debit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5812,
+    "mcc_category": null,
+    "percent_rate": 0.0119,
+    "fixed_rate": 0.10
+  },
+  {
+    "card_type": "Prepaid",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5812,
+    "mcc_category": null,
+    "percent_rate": 0.0119,
+    "fixed_rate": 0.10
+  }
+]

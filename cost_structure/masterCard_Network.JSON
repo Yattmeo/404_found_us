@@ -1,0 +1,17 @@
+[
+  {
+    "fee_name": "Mastercard Acquirer Brand Volume (Assessment Fee)",
+    "percent_rate": 0.0013,
+    "fixed_rate": 0
+  },
+  {
+    "fee_name": "Transactions => 1000 USD (Assessment Fee)",
+    "percent_rate": 0.0001,
+    "fixed_rate": 0
+  },
+  {
+    "fee_name": "Mastercard Account Status Inquiry Service Fee – Intra-regional",
+    "percent_rate": 0,
+    "fixed_rate": 0.025
+  }
+]

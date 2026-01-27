@@ -31,12 +31,13 @@ def random_date(start_date, end_date):
 # 3. "The General Store" (MERCH_003): Standard spread ($20 - $100).
 
 merchants = [
-    {"id": "MERCH_001", "type": "Micro", "min": 3.00, "max": 15.00, "cards": ["Debit", "Debit", "Credit"]}, 
+    {"id": "MERCH_001", "type": "Micro", "min": 3.00, "max": 15.00, "cards": ["Debit", "Debit", "Credit", "Debit (Prepaid)"]}, 
     {"id": "MERCH_002", "type": "Macro", "min": 500.00, "max": 5000.00, "cards": ["Credit", "Credit", "Credit"]},
-    {"id": "MERCH_003", "type": "Mixed", "min": 20.00, "max": 150.00, "cards": ["Debit", "Credit"]}
+    {"id": "MERCH_003", "type": "Mixed", "min": 20.00, "max": 150.00, "cards": ["Debit", "Credit", "Debit (Prepaid)"]}
 ]
 
 card_brands = ["Visa", "Mastercard", "Amex"]
+transaction_types = ["Online", "Offline"]
 start_date = datetime(2025, 1, 1)
 end_date = datetime(2025, 1, 31)
 
@@ -61,10 +62,9 @@ for _ in range(NUM_ROWS):
         "merchant_id": merchant["id"],
         "date": random_date(start_date, end_date).strftime("%Y-%m-%d %H:%M:%S"),
         "amount": amount,
-        "currency": "SGD",
         "card_type": card_type,
         "card_brand": brand,
-        "status": "Approved" # Assuming successful txns for cost calc
+        "transaction_type": random.choice(transaction_types),
     }
     data.append(row)
 
@@ -72,9 +72,9 @@ for _ in range(NUM_ROWS):
 # Add a few "weird" rows to test your validation logic
 edge_cases = [
     # The "Zero" amount (Should be rejected or handled)
-    {"transaction_id": generate_txn_id(), "merchant_id": "MERCH_003", "date": "2025-01-15 10:00:00", "amount": 0.00, "currency": "SGD", "card_type": "Debit", "card_brand": "Visa", "status": "Failed"},
+    {"transaction_id": generate_txn_id(), "merchant_id": "MERCH_003", "date": "2025-01-15 10:00:00", "amount": 0.00,"card_type": "Debit", "card_brand": "Visa", "transaction_type": "Online"},
     # The "Negative" refund (Should not add to cost volume)
-    {"transaction_id": generate_txn_id(), "merchant_id": "MERCH_003", "date": "2025-01-15 12:00:00", "amount": -50.00, "currency": "SGD", "card_type": "Credit", "card_brand": "Visa", "status": "Refund"},
+    {"transaction_id": generate_txn_id(), "merchant_id": "MERCH_003", "date": "2025-01-15 12:00:00", "amount": -50.00,"card_type": "Credit", "card_brand": "Visa", "transaction_type": "Offline"},
 ]
 data.extend(edge_cases)
 
