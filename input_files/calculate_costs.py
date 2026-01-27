@@ -100,9 +100,13 @@ def process_transactions(csv_path, mcc):
 
 def display_metrics(df):
     """Display useful metrics about the processed transactions"""
-    print("\n" + "="*60)
-    print("COST ANALYSIS SUMMARY")
-    print("="*60)
+    import sys
+    
+    # Build output as a string to avoid buffering issues
+    output = []
+    output.append("\n" + "="*60)
+    output.append("COST ANALYSIS SUMMARY")
+    output.append("="*60)
     
     # Filter valid transactions (positive amounts, match found)
     valid_df = df[(df['amount'] > 0) & (df['match_found'] == True)]
@@ -113,15 +117,18 @@ def display_metrics(df):
     transaction_count = len(valid_df)
     effective_rate = (total_cost / total_volume * 100) if total_volume > 0 else 0
     
-    print(f"\n📊 OVERALL METRICS:")
-    print(f"   Total Transactions:     {transaction_count:,}")
-    print(f"   Total Volume:           ${total_volume:,.2f}")
-    print(f"   Total Cost:             ${total_cost:,.2f}")
-    print(f"   Effective Rate:         {effective_rate:.3f}%")
-    print(f"   Average Cost/Txn:       ${total_cost/transaction_count:.4f}" if transaction_count > 0 else "   Average Cost/Txn:       N/A")
+    output.append(f"\n📊 OVERALL METRICS:")
+    output.append(f"   Total Transactions:     {transaction_count:,}")
+    output.append(f"   Total Volume:           ${total_volume:,.2f}")
+    output.append(f"   Total Cost:             ${total_cost:,.2f}")
+    output.append(f"   Effective Rate:         {effective_rate:.3f}%")
+    if transaction_count > 0:
+        output.append(f"   Average Cost/Txn:       ${total_cost/transaction_count:.4f}")
+    else:
+        output.append("   Average Cost/Txn:       N/A")
     
     # By Product
-    print(f"\n💳 BY PRODUCT:")
+    output.append(f"\n💳 BY PRODUCT:")
     product_summary = valid_df.groupby('product').agg({
         'cost': 'sum',
         'amount': 'sum',
@@ -129,14 +136,14 @@ def display_metrics(df):
     }).rename(columns={'transaction_id': 'count'})
     
     for product, row in product_summary.iterrows():
-        print(f"   {product}:")
-        print(f"      Transactions: {int(row['count']):,}")
-        print(f"      Volume:       ${row['amount']:,.2f}")
-        print(f"      Total Cost:   ${row['cost']:,.2f}")
-        print(f"      Eff. Rate:    {(row['cost']/row['amount']*100):.3f}%")
+        output.append(f"   {product}:")
+        output.append(f"      Transactions: {int(row['count']):,}")
+        output.append(f"      Volume:       ${row['amount']:,.2f}")
+        output.append(f"      Total Cost:   ${row['cost']:,.2f}")
+        output.append(f"      Eff. Rate:    {(row['cost']/row['amount']*100):.3f}%")
     
     # By Card Type
-    print(f"\n💰 BY CARD TYPE:")
+    output.append(f"\n💰 BY CARD TYPE:")
     card_summary = valid_df.groupby('card_type').agg({
         'cost': 'sum',
         'amount': 'sum',
@@ -144,13 +151,13 @@ def display_metrics(df):
     }).rename(columns={'transaction_id': 'count'})
     
     for card_type, row in card_summary.iterrows():
-        print(f"   {card_type}:")
-        print(f"      Transactions: {int(row['count']):,}")
-        print(f"      Volume:       ${row['amount']:,.2f}")
-        print(f"      Total Cost:   ${row['cost']:,.2f}")
+        output.append(f"   {card_type}:")
+        output.append(f"      Transactions: {int(row['count']):,}")
+        output.append(f"      Volume:       ${row['amount']:,.2f}")
+        output.append(f"      Total Cost:   ${row['cost']:,.2f}")
     
     # By Transaction Type
-    print(f"\n🌐 BY TRANSACTION TYPE:")
+    output.append(f"\n🌐 BY TRANSACTION TYPE:")
     txn_type_summary = valid_df.groupby('transaction_type').agg({
         'cost': 'sum',
         'amount': 'sum',
@@ -158,19 +165,22 @@ def display_metrics(df):
     }).rename(columns={'transaction_id': 'count'})
     
     for txn_type, row in txn_type_summary.iterrows():
-        print(f"   {txn_type}:")
-        print(f"      Transactions: {int(row['count']):,}")
-        print(f"      Volume:       ${row['amount']:,.2f}")
-        print(f"      Total Cost:   ${row['cost']:,.2f}")
+        output.append(f"   {txn_type}:")
+        output.append(f"      Transactions: {int(row['count']):,}")
+        output.append(f"      Volume:       ${row['amount']:,.2f}")
+        output.append(f"      Total Cost:   ${row['cost']:,.2f}")
     
     # Edge cases
     edge_cases = df[df['match_found'] == False]
     if len(edge_cases) > 0:
-        print(f"\n⚠️  UNMATCHED TRANSACTIONS:")
-        print(f"   Count: {len(edge_cases)}")
-        print(f"   These transactions had no matching fee structure or invalid amounts.")
+        output.append(f"\n⚠️  UNMATCHED TRANSACTIONS:")
+        output.append(f"   Count: {len(edge_cases)}")
+        output.append(f"   These transactions had no matching fee structure or invalid amounts.")
     
-    print("\n" + "="*60)
+    output.append("\n" + "="*60)
+    
+    # Print all at once to avoid buffering issues
+    print("\n".join(output), flush=True)
 
 def main():
     """Main function"""
