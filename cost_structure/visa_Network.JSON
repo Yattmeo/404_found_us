@@ -1,0 +1,26 @@
+[
+  {
+    "fee_name": "Visa US Acquirer Service Fee (Assessment Fee)",
+    "card_type": "Debit",
+    "percent_rate": 0.0013,
+    "fixed_rate": 0
+  },
+  {
+    "fee_name": "Visa US Acquirer Service Fee (Assessment Fee)",
+    "card_type": "Credit",
+    "percent_rate": 0.0014,
+    "fixed_rate": 0
+  },
+  {
+    "fee_name": "Visa Acquirer Processing Fee (APF)",
+    "card_type": "Debit",
+    "percent_rate": 0,
+    "fixed_rate": 0.0155
+  },
+  {
+    "fee_name": "Visa Acquirer Processing Fee (APF)",
+    "card_type": "Credit",
+    "percent_rate": 0,
+    "fixed_rate": 0.0195
+  }
+]
