@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { Upload, FileCheck, AlertCircle, Download, X } from 'lucide-react';
+import { Upload, FileCheck, AlertCircle, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Button } from './ui/Button';
-import { Label } from './ui/Label';
 
 const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
   const [dragActive, setDragActive] = useState(false);
