@@ -1,6 +1,6 @@
 ﻿import os
 from flask import Flask, jsonify
-from flask_cors import CORS
+from flask_cors import CORS  # noqa: F401
 
 from config import config_by_name
 from models import db

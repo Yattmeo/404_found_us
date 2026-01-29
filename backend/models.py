@@ -2,7 +2,7 @@
 Database models for the application
 """
 from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
+from flask_sqlalchemy import SQLAlchemy  # noqa: F401
 
 db = SQLAlchemy()
 
