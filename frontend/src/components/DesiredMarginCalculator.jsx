@@ -362,7 +362,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                     disabled={isLoading}
                     className="w-full"
                   >
-                    {isLoading ? 'Calculating...' : 'Calculate Quotation'}
+                    {isLoading ? 'Calculating...' : 'Proceed to Projection'}
                   </Button>
                 </>
               )}

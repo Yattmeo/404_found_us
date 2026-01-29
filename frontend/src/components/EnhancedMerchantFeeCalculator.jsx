@@ -296,7 +296,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                     disabled={isLoading}
                     className="w-full"
                   >
-                    {isLoading ? 'Calculating...' : 'Calculate Results'}
+                    {isLoading ? 'Calculating...' : 'Proceed to Projection'}
                   </Button>
                 </>
               )}
