@@ -1,32 +1,37 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState } from 'react';
+import LandingPage from './components/LandingPage';
+import EnhancedMerchantFeeCalculator from './components/EnhancedMerchantFeeCalculator';
+import DesiredMarginCalculator from './components/DesiredMarginCalculator';
 import './App.css';
 
 function App() {
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [currentView, setCurrentView] = useState('landing');
 
-  useEffect(() => {
-    fetch('http://localhost:5000/')
-      .then(response => response.json())
-      .then(data => {
-        setMessage(data.message);
-        setLoading(false);
-      })
-      .catch(error => {
-        console.error('Error:', error);
-        setMessage('Error connecting to backend');
-        setLoading(false);
-      });
-  }, []);
+  const handleNavigate = (page) => {
+    setCurrentView(page);
+  };
 
+  const handleBackToLanding = () => {
+    setCurrentView('landing');
+  };
+
+  // Show landing page
+  if (currentView === 'landing') {
+    return <LandingPage onNavigate={handleNavigate} />;
+  }
+
+  // Show calculator pages
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>ML Web Application</h1>
-        {loading ? <p>Loading...</p> : <p>{message}</p>}
-      </header>
+    <div className="min-h-screen bg-gray-50">
+      {currentView === 'current-rates' && (
+        <EnhancedMerchantFeeCalculator onBackToLanding={handleBackToLanding} />
+      )}
+      {currentView === 'desired-margin' && (
+        <DesiredMarginCalculator onBackToLanding={handleBackToLanding} />
+      )}
     </div>
   );
 }
 
 export default App;
+
