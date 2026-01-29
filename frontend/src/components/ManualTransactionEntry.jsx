@@ -17,6 +17,7 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
   const [validationErrors, setValidationErrors] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState([]);
+  const [isValidating, setIsValidating] = useState(false);
 
   const addTransaction = () => {
     setTransactions([
@@ -62,12 +63,44 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
   };
 
   const validateDate = (dateStr) => {
-    const formats = [
-      /^\d{2}\/\d{2}\/\d{4}$/,
-      /^\d{4}-\d{2}-\d{2}$/,
-      /^\d{2}-\d{2}-\d{4}$/
-    ];
-    return formats.some(format => format.test(dateStr));
+    if (!dateStr) return false;
+    
+    const trimmed = dateStr.trim();
+    let parsedDate;
+    
+    // Try to parse different formats - support flexible day/month (1 or 2 digits)
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
+      // D/M/YYYY or DD/MM/YYYY
+      const [day, month, year] = trimmed.split('/');
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) {
+      // YYYY-M-D or YYYY-MM-DD
+      const [year, month, day] = trimmed.split('-');
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(trimmed)) {
+      // D-M-YYYY or DD-MM-YYYY
+      const [day, month, year] = trimmed.split('-');
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else if (/^\d{8}$/.test(trimmed)) {
+      // DDMMYYYY
+      const day = trimmed.substring(0, 2);
+      const month = trimmed.substring(2, 4);
+      const year = trimmed.substring(4, 8);
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else {
+      return false;
+    }
+    
+    // Check if date is valid
+    if (!(parsedDate instanceof Date) || isNaN(parsedDate.getTime())) {
+      return false;
+    }
+    
+    // Check if date is not in the future
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // Set to end of today
+    
+    return parsedDate <= today;
   };
 
   const validateAmount = (amount) => {
@@ -76,8 +109,10 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
   };
 
   const handleValidateAndPreview = () => {
+    setIsValidating(true);
     const errors = [];
     const validTransactions = [];
+    const transactionIds = new Set();
 
     transactions.forEach((t, rowIdx) => {
       const rowNum = rowIdx + 1;
@@ -89,6 +124,17 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
           column: 'transaction_id',
           error: 'Required field cannot be empty'
         });
+      } else {
+        // Check for duplicate transaction_id
+        if (transactionIds.has(t.transaction_id)) {
+          errors.push({
+            row: rowNum,
+            column: 'transaction_id',
+            error: 'Duplicate transaction ID - must be unique'
+          });
+        } else {
+          transactionIds.add(t.transaction_id);
+        }
       }
       
       if (!t.transaction_date) {
@@ -101,7 +147,7 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
         errors.push({
           row: rowNum,
           column: 'transaction_date',
-          error: 'Invalid date format (use DD/MM/YYYY)'
+          error: 'Invalid date format or future date (use DD/MM/YYYY or DDMMYYYY, date cannot be in the future)'
         });
       }
       
@@ -151,10 +197,12 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
     if (errors.length > 0) {
       setValidationErrors(errors);
       setShowPreview(false);
+      setIsValidating(false);
     } else {
       setValidationErrors([]);
       setPreviewData(validTransactions);
       setShowPreview(true);
+      setIsValidating(false);
     }
   };
 
@@ -276,10 +324,10 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
                   </td>
                   <td className="px-2 py-2">
                     <Input
-                      type="text"
+                      type="date"
                       value={transaction.transaction_date}
                       onChange={(e) => updateTransaction(index, 'transaction_date', e.target.value)}
-                      placeholder="DD/MM/YYYY"
+                      max={new Date().toISOString().split('T')[0]}
                       className={`h-8 text-xs ${
                         rowErrors.some(e => e.column === 'transaction_date') ? 'border-red-500' : ''
                       }`}
@@ -298,55 +346,56 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
                   </td>
                   <td className="px-2 py-2">
                     <Input
-                      type="number"
-                      step="0.01"
+                      type="text"
                       value={transaction.amount}
                       onChange={(e) => updateTransaction(index, 'amount', e.target.value)}
-                      placeholder="0.00"
+                      placeholder="100.00"
                       className={`h-8 text-xs ${
                         rowErrors.some(e => e.column === 'amount') ? 'border-red-500' : ''
                       }`}
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <select
+                    <input
+                      list="transaction-types"
                       value={transaction.transaction_type}
                       onChange={(e) => updateTransaction(index, 'transaction_type', e.target.value)}
+                      placeholder="Select or type"
                       className={`w-full h-8 px-2 py-1 border rounded-lg focus:ring-2 focus:ring-amber-500 text-xs ${
                         rowErrors.some(e => e.column === 'transaction_type') ? 'border-red-500' : 'border-gray-300'
                       }`}
-                    >
-                      <option value="">Select</option>
-                      <option value="Sale">Sale</option>
-                      <option value="Refund">Refund</option>
-                      <option value="Void">Void</option>
-                    </select>
+                    />
+                    <datalist id="transaction-types">
+                      <option value="Sale" />
+                      <option value="Refund" />
+                      <option value="Void" />
+                      <option value="Authorization" />
+                      <option value="Chargeback" />
+                    </datalist>
                   </td>
                   <td className="px-2 py-2">
-                    <select
+                    <input
+                      list="card-types"
                       value={transaction.card_type}
                       onChange={(e) => updateTransaction(index, 'card_type', e.target.value)}
+                      placeholder="Select or type"
                       className={`w-full h-8 px-2 py-1 border rounded-lg focus:ring-2 focus:ring-amber-500 text-xs ${
                         rowErrors.some(e => e.column === 'card_type') ? 'border-red-500' : 'border-gray-300'
                       }`}
-                    >
-                      <option value="">Select</option>
-                      <option value="Visa">Visa</option>
-                      <option value="Mastercard">Mastercard</option>
-                      <option value="Amex">American Express</option>
-                      <option value="Discover">Discover</option>
-                    </select>
+                    />
+                    <datalist id="card-types">
+                      <option value="Visa" />
+                      <option value="Mastercard" />
+                      <option value="Amex" />
+                      <option value="American Express" />
+                      <option value="Discover" />
+                      <option value="Diners Club" />
+                      <option value="JCB" />
+                      <option value="UnionPay" />
+                    </datalist>
                   </td>
                   <td className="px-2 py-2">
-                    <div className="flex gap-1 justify-center">
-                      <button
-                        type="button"
-                        onClick={() => duplicateTransaction(index)}
-                        className="p-1 text-gray-600 hover:text-amber-600 rounded"
-                        title="Duplicate"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
+                    <div className="flex justify-center">
                       <button
                         type="button"
                         onClick={() => removeTransaction(index)}
@@ -363,6 +412,19 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
             })}
           </tbody>
         </table>
+
+        {/* Add Row Button Inside Table */}
+        <div className="mt-4 flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={addTransaction}
+            className="flex items-center justify-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Add Row
+          </Button>
+        </div>
       </div>
 
       {/* Error Details */}
@@ -380,16 +442,7 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
       )}
 
       {/* Action Buttons */}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={addTransaction}
-          className="flex items-center justify-center gap-2 flex-1"
-        >
-          <Plus className="w-4 h-4" />
-          Add Row
-        </Button>
+      <div className="flex gap-2">
         <Button
           type="button"
           variant="outline"
@@ -398,17 +451,29 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
         >
           Clear All
         </Button>
+        
+        {/* Only show Validate button when there's actual data */}
+        {!transactions.every(t => Object.values(t).every(v => !v)) && (
+          <Button
+            type="button"
+            onClick={handleValidateAndPreview}
+            disabled={isValidating}
+            className="flex-1"
+          >
+            {isValidating ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Validating...
+              </span>
+            ) : (
+              'Validate & Preview'
+            )}
+          </Button>
+        )}
       </div>
-
-      {/* Validate & Preview Button */}
-      <Button
-        type="button"
-        onClick={handleValidateAndPreview}
-        disabled={transactions.every(t => Object.values(t).every(v => !v))}
-        className="w-full"
-      >
-        Validate & Preview
-      </Button>
     </div>
   );
 };

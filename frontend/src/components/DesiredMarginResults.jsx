@@ -30,19 +30,31 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
             {/* Suggested Rate */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
               <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
-              <p className="text-4xl font-bold text-gray-900">{results.suggestedRate}</p>
+              <p className="text-4xl font-bold text-gray-900">
+                {results.suggestedRate !== null && results.suggestedRate !== undefined 
+                  ? results.suggestedRate 
+                  : <span className="text-xl text-gray-400">Pending backend calculation</span>}
+              </p>
             </div>
 
             {/* Margin */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
               <p className="text-sm font-medium text-gray-700 mb-2">Margin:</p>
-              <p className="text-4xl font-bold text-gray-900">{results.marginBps}</p>
+              <p className="text-4xl font-bold text-gray-900">
+                {results.marginBps !== null && results.marginBps !== undefined
+                  ? results.marginBps
+                  : <span className="text-xl text-gray-400">Pending backend calculation</span>}
+              </p>
             </div>
 
             {/* Estimated Profit */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
               <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
-              <p className="text-4xl font-bold text-gray-900">{results.estimatedProfit}</p>
+              <p className="text-4xl font-bold text-gray-900">
+                {results.estimatedProfit !== null && results.estimatedProfit !== undefined
+                  ? results.estimatedProfit
+                  : <span className="text-xl text-gray-400">Pending backend calculation</span>}
+              </p>
             </div>
           </div>
 
@@ -54,11 +66,19 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">Lower Bound:</span>
-                  <span className="text-lg font-semibold text-gray-900">{results.quotableRange?.min}</span>
+                  <span className="text-lg font-semibold text-gray-900">
+                    {results.quotableRange?.min !== null && results.quotableRange?.min !== undefined
+                      ? results.quotableRange.min
+                      : <span className="text-sm text-gray-400">Pending</span>}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">Upper Bound:</span>
-                  <span className="text-lg font-semibold text-gray-900">{results.quotableRange?.max}</span>
+                  <span className="text-lg font-semibold text-gray-900">
+                    {results.quotableRange?.max !== null && results.quotableRange?.max !== undefined
+                      ? results.quotableRange.max
+                      : <span className="text-sm text-gray-400">Pending</span>}
+                  </span>
                 </div>
               </div>
             </div>
@@ -70,21 +90,33 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                 <div>
                   <div className="flex justify-between items-start mb-1">
                     <span className="text-sm text-gray-600">Expected ATS:</span>
-                    <span className="text-lg font-semibold text-gray-900">{results.expectedATS}</span>
+                    <span className="text-lg font-semibold text-gray-900">
+                      {results.expectedATS !== null && results.expectedATS !== undefined
+                        ? results.expectedATS
+                        : <span className="text-sm text-gray-400">Pending</span>}
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-500 text-right">
-                    Margin of Error: ±{results.atsMarginError}
-                  </div>
+                  {results.atsMarginError && (
+                    <div className="text-xs text-gray-500 text-right">
+                      Margin of Error: {results.atsMarginError}
+                    </div>
+                  )}
                 </div>
 
                 <div>
                   <div className="flex justify-between items-start mb-1">
                     <span className="text-sm text-gray-600">Expected Volume:</span>
-                    <span className="text-lg font-semibold text-gray-900">{results.expectedVolume}</span>
+                    <span className="text-lg font-semibold text-gray-900">
+                      {results.expectedVolume !== null && results.expectedVolume !== undefined
+                        ? results.expectedVolume
+                        : <span className="text-sm text-gray-400">Pending</span>}
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-500 text-right">
-                    Margin of Error: ±{results.volumeMarginError}
-                  </div>
+                  {results.volumeMarginError && (
+                    <div className="text-xs text-gray-500 text-right">
+                      Margin of Error: {results.volumeMarginError}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

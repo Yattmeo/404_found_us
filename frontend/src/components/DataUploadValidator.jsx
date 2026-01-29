@@ -18,9 +18,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
 
   const handleDownloadTemplate = () => {
     const headers = requiredColumns.join(',');
-    const exampleRow1 = 'TXN001,17/01/2026,M12345,500.00,Sale,Visa';
-    const exampleRow2 = 'TXN002,18/01/2026,M12345,250.50,Sale,Mastercard';
-    const csvContent = `${headers}\\n${exampleRow1}\\n${exampleRow2}`;
+    const csvContent = headers;
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -48,16 +46,49 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
   };
 
   const validateDate = (dateStr) => {
-    const formats = [
-      /^\\d{2}\\/\\d{2}\\/\\d{4}$/,
-      /^\\d{4}-\\d{2}-\\d{2}$/,
-      /^\\d{2}-\\d{2}-\\d{4}$/
-    ];
-    return formats.some(format => format.test(dateStr));
+    if (!dateStr) return false;
+    
+    const trimmed = dateStr.trim();
+    let parsedDate;
+    
+    // Try to parse different formats - support flexible day/month (1 or 2 digits)
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
+      // D/M/YYYY or DD/MM/YYYY
+      const [day, month, year] = trimmed.split('/');
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) {
+      // YYYY-M-D or YYYY-MM-DD
+      const [year, month, day] = trimmed.split('-');
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(trimmed)) {
+      // D-M-YYYY or DD-MM-YYYY
+      const [day, month, year] = trimmed.split('-');
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else if (/^\d{8}$/.test(trimmed)) {
+      // DDMMYYYY
+      const day = trimmed.substring(0, 2);
+      const month = trimmed.substring(2, 4);
+      const year = trimmed.substring(4, 8);
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else {
+      return false;
+    }
+    
+    // Check if date is valid
+    if (!(parsedDate instanceof Date) || isNaN(parsedDate.getTime())) {
+      return false;
+    }
+    
+    // Check if date is not in the future
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // Set to end of today
+    
+    return parsedDate <= today;
   };
 
   const validateAmount = (amount) => {
-    return !isNaN(parseFloat(amount)) && isFinite(Number(amount));
+    const num = parseFloat(amount);
+    return !isNaN(num) && isFinite(num) && num > 0;
   };
 
   const validateCSVStructure = (input) => {
@@ -99,6 +130,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
 
     const errors = [];
     const data = [];
+    const transactionIds = new Set();
 
     for (let i = 1; i < lines.length; i++) {
       let values;
@@ -127,11 +159,24 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
         }
       });
 
+      // Check for duplicate transaction_id
+      if (row['transaction_id']) {
+        if (transactionIds.has(row['transaction_id'])) {
+          errors.push({
+            row: i,
+            column: 'transaction_id',
+            error: 'Duplicate transaction ID - must be unique'
+          });
+        } else {
+          transactionIds.add(row['transaction_id']);
+        }
+      }
+
       if (row['transaction_date'] && !validateDate(row['transaction_date'])) {
         errors.push({
           row: i,
           column: 'transaction_date',
-          error: 'Invalid date format. Use DD/MM/YYYY, YYYY-MM-DD, or MM/DD/YYYY'
+          error: 'Invalid date format or future date. Use DD/MM/YYYY, YYYY-MM-DD, or MM/DD/YYYY. Date cannot be in the future.'
         });
       }
 
@@ -139,7 +184,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
         errors.push({
           row: i,
           column: 'amount',
-          error: 'Amount must be a valid number'
+          error: 'Amount must be a number greater than 0'
         });
       }
 
@@ -182,10 +227,21 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
         
         // Convert to array format matching CSV structure
-        const rows = jsonData.map((row, idx) => {
-          const values = Object.values(row).map(v => v ? String(v).trim() : '');
-          return values;
-        });
+        // Include headers as first row
+        const rows = [];
+        if (jsonData.length > 0) {
+          // Get headers from first object
+          const headers = Object.keys(jsonData[0]);
+          rows.push(headers);
+          
+          // Add data rows
+          jsonData.forEach((row) => {
+            const values = headers.map(header => 
+              row[header] ? String(row[header]).trim() : ''
+            );
+            rows.push(values);
+          });
+        }
         
         validation = validateCSVStructure(rows);
       } else {
@@ -289,6 +345,20 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
                   <p className="text-sm text-gray-600">Validating file...</p>
                 </div>
+              ) : fileName && validationErrors.length > 0 ? (
+                <div className="flex flex-col items-center gap-3">
+                  <AlertCircle className="w-12 h-12 text-red-500" />
+                  <div>
+                    <p className="text-sm font-medium text-red-900">{fileName}</p>
+                    <p className="text-sm text-red-600 mt-1">{validationErrors.length} validation error(s) found</p>
+                  </div>
+                  <label htmlFor="file-upload" className="cursor-pointer">
+                    <span className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
+                      <Upload className="w-4 h-4" />
+                      Re-upload File
+                    </span>
+                  </label>
+                </div>
               ) : fileName && validationErrors.length === 0 ? (
                 <div className="flex flex-col items-center gap-2">
                   <FileCheck className="w-12 h-12 text-green-500" />
@@ -304,22 +374,24 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                       <span className="text-gray-600"> or drag and drop</span>
                     </label>
                     <p className="text-xs text-gray-500 mt-1">CSV or Excel files (.csv, .xlsx, .xls)</p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Need a template?{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadTemplate();
+                        }}
+                        className="text-amber-600 hover:text-amber-700 underline font-medium"
+                      >
+                        Download Template
+                      </button>
+                    </p>
                   </div>
                 </>
               )}
             </div>
           </div>
-
-          {/* Download Template Button */}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleDownloadTemplate}
-            className="w-full flex items-center justify-center gap-2"
-          >
-            <Download className="w-4 h-4" />
-            Download CSV Template
-          </Button>
         </>
       ) : (
         // Preview Section

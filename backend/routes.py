@@ -11,7 +11,7 @@ from models import db, Transaction, Merchant, CalculationResult, UploadBatch
 from validators import TransactionValidator, MerchantValidator, ValidationError
 from services import DataProcessingService, MerchantFeeCalculationService, MCCService
 from errors import (
-    APIError, ValidationAPIError, NotFoundError, success_response, 
+    APIError, ValidationAPIError, NotFoundError, InternalServerError, success_response, 
     error_response, paginated_response
 )
 

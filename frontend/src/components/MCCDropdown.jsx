@@ -28,12 +28,23 @@ const MCC_CODES = [
 const MCCDropdown = ({ value, onChange, error }) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [customMode, setCustomMode] = useState(false);
 
   const filteredCodes = MCC_CODES.filter(mcc =>
     mcc.code.includes(search) || mcc.description.toLowerCase().includes(search.toLowerCase())
   );
 
   const selectedMCC = MCC_CODES.find(mcc => mcc.code === value);
+  const isCustomValue = value && !selectedMCC;
+
+  const handleCustomSubmit = () => {
+    if (search.trim()) {
+      onChange(search.trim());
+      setOpen(false);
+      setSearch('');
+      setCustomMode(false);
+    }
+  };
 
   return (
     <div className="relative">
@@ -44,8 +55,8 @@ const MCCDropdown = ({ value, onChange, error }) => {
           error ? 'border-red-500' : 'border-gray-300'
         }`}
       >
-        <span className={selectedMCC ? 'text-gray-900' : 'text-gray-400'}>
-          {selectedMCC ? `${selectedMCC.code} - ${selectedMCC.description}` : 'Select MCC...'}
+        <span className={value ? 'text-gray-900' : 'text-gray-400'}>
+          {selectedMCC ? `${selectedMCC.code} - ${selectedMCC.description}` : isCustomValue ? value : 'Select or enter MCC...'}
         </span>
         <ChevronsUpDown className="w-4 h-4 text-gray-400" />
       </button>
@@ -55,37 +66,66 @@ const MCCDropdown = ({ value, onChange, error }) => {
           <div className="p-3 border-b border-gray-200">
             <input
               type="text"
-              placeholder="Search MCC code or description..."
+              placeholder="Search or enter custom MCC code..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && customMode) {
+                  e.preventDefault();
+                  handleCustomSubmit();
+                }
+              }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
             />
           </div>
           <div className="max-h-60 overflow-y-auto">
             {filteredCodes.length === 0 ? (
-              <div className="p-4 text-center text-sm text-gray-500">
-                No MCC codes found
+              <div className="p-4 space-y-2">
+                <div className="text-center text-sm text-gray-500">
+                  No matching MCC codes found
+                </div>
+                {search.trim() && (
+                  <button
+                    onClick={handleCustomSubmit}
+                    className="w-full px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Use "{search.trim()}" as custom MCC
+                  </button>
+                )}
               </div>
             ) : (
-              filteredCodes.map((mcc) => (
-                <div
-                  key={mcc.code}
-                  onClick={() => {
-                    onChange(mcc.code);
-                    setOpen(false);
-                    setSearch('');
-                  }}
-                  className={`px-4 py-3 cursor-pointer hover:bg-amber-50 transition-colors flex items-center justify-between ${
-                    value === mcc.code ? 'bg-amber-50' : ''
-                  }`}
-                >
-                  <div>
-                    <div className="font-medium text-sm text-gray-900">{mcc.code}</div>
-                    <div className="text-xs text-gray-600">{mcc.description}</div>
+              <>
+                {filteredCodes.map((mcc) => (
+                  <div
+                    key={mcc.code}
+                    onClick={() => {
+                      onChange(mcc.code);
+                      setOpen(false);
+                      setSearch('');
+                      setCustomMode(false);
+                    }}
+                    className={`px-4 py-3 cursor-pointer hover:bg-amber-50 transition-colors flex items-center justify-between ${
+                      value === mcc.code ? 'bg-amber-50' : ''
+                    }`}
+                  >
+                    <div>
+                      <div className="font-medium text-sm text-gray-900">{mcc.code}</div>
+                      <div className="text-xs text-gray-600">{mcc.description}</div>
+                    </div>
+                    {value === mcc.code && <Check className="w-4 h-4 text-amber-600" />}
                   </div>
-                  {value === mcc.code && <Check className="w-4 h-4 text-amber-600" />}
-                </div>
-              ))
+                ))}
+                {search.trim() && (
+                  <div className="border-t border-gray-200 p-3">
+                    <button
+                      onClick={handleCustomSubmit}
+                      className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors"
+                    >
+                      Use "{search.trim()}" as custom MCC
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

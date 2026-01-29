@@ -59,21 +59,33 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       setResults(apiResults);
     } catch (error) {
       console.error('Calculation error:', error);
-      // Fallback to mock data if API fails
+      // TODO: Remove this fallback once backend API is fully implemented
+      // Calculate what we can from actual transaction data
+      const totalAmount = transactionData.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+      const avgTransactionSize = transactionData.length > 0 ? totalAmount / transactionData.length : 0;
+      
       const mockResults = {
-        suggestedRate: 2.45,
-        margin: 185,
-        estimatedProfit: 1250.00,
-        expectedATS: 85000,
-        expectedVolume: 193467,
+        // TEMPORARY: These should come from backend cost engine model
+        suggestedRate: null, // Backend should calculate based on MCC, volume, and desired margin
+        margin: null, // Backend should calculate margin in bps
+        estimatedProfit: null, // Backend should calculate based on rate and volume
+        expectedATS: null, // Backend should predict based on transaction patterns
+        expectedVolume: null, // Backend should predict based on historical data
         quotableRange: {
-          min: '2.15%',
-          max: '2.75%'
+          min: null, // Backend should calculate lower bound
+          max: null // Backend should calculate upper bound
         },
-        adoptionProbability: 75,
+        adoptionProbability: null, // Backend ML model should predict
+        profitability: data.currentRate ? null : null, // Backend should calculate if current rate provided
+        
+        // Dynamic values from actual transaction data
+        processingVolume: totalAmount,
+        averageTransactionSize: avgTransactionSize,
+        transactionCount: transactionData.length,
         currentRateProvided: !!data.currentRate,
-        profitability: data.currentRate ? 68 : null,
-        transactionCount: transactionData.length
+        
+        // Backend should provide profitDistribution array for chart
+        // profitDistribution: [{ value: number, label: string }, ...]
       };
       setResults(mockResults);
     } finally {
@@ -187,9 +199,10 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                       <button
                         type="button"
                         onClick={() => setDataValidated(false)}
-                        className="text-sm text-orange-600 hover:text-orange-700 font-medium"
+                        className="flex items-center gap-1 text-sm text-orange-600 hover:text-orange-700 font-medium"
                       >
-                        Edit Data
+                        <ArrowLeft className="w-4 h-4" />
+                        Back
                       </button>
                     </div>
                   </div>
@@ -214,11 +227,11 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                     <select
                       id="feeStructure"
                       {...register('feeStructure', { required: 'Please select a fee structure' })}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white"
                     >
                       <option value="">Select structure</option>
                       <option value="percentage">% (Percentage only)</option>
-                      <option value="percentage_fixed">% + Fixed (Percentage + Fixed Fee)</option>
+                      <option value="percentage-fixed">% + Fixed Fee</option>
                       <option value="fixed">Fixed Fee</option>
                     </select>
                     {errors.feeStructure && (
@@ -227,18 +240,23 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                   </div>
 
                   {/* Fixed Fee - Conditional */}
-                  {(feeStructure === 'percentage_fixed' || feeStructure === 'fixed') && (
+                  {(feeStructure === 'percentage-fixed' || feeStructure === 'fixed') && (
                     <div>
-                      <Label htmlFor="fixedFee">Fixed Fee</Label>
+                      <Label htmlFor="fixedFee">Fixed Fee {feeStructure === 'percentage-fixed' ? <span className="text-gray-500 font-normal">(Optional)</span> : ''}</Label>
                       <div className="relative">
                         <Input
                           id="fixedFee"
                           type="number"
                           step="0.01"
+                          min="0"
                           {...register('fixedFee', {
-                            pattern: {
-                              value: /^\\d*\\.?\\d*$/,
-                              message: 'Please enter a valid number'
+                            required: feeStructure === 'fixed' ? 'Fixed fee is required for fixed fee structure' : false,
+                            min: { value: 0, message: 'Fixed fee cannot be negative' },
+                            validate: (value) => {
+                              if (feeStructure === 'fixed' && (!value || parseFloat(value) <= 0)) {
+                                return 'Fixed fee must be greater than 0';
+                              }
+                              return true;
                             }
                           })}
                           placeholder="Enter fixed fee"
@@ -254,15 +272,19 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                     </div>
                   )}
 
-                  {/* Minimum per transaction fee */}
+                  {/* Minimum per Transaction Fee */}
                   <div>
-                    <Label htmlFor="minimumFee">Minimum per transaction fee (Optional)</Label>
+                    <Label htmlFor="minimumFee">Minimum per Transaction Fee <span className="text-gray-500 font-normal">(Optional)</span></Label>
                     <div className="relative">
                       <Input
                         id="minimumFee"
                         type="number"
                         step="0.01"
-                        {...register('minimumFee')}
+                        min="0"
+                        {...register('minimumFee', {
+                          min: { value: 0, message: 'Minimum fee cannot be negative' },
+                          validate: (value) => !value || parseFloat(value) >= 0 || 'Minimum fee must be a positive number'
+                        })}
                         placeholder="Enter minimum fee"
                         className={minimumFee ? 'pl-8' : ''}
                       />
@@ -270,17 +292,26 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                       )}
                     </div>
+                    {errors.minimumFee && (
+                      <p className="mt-1 text-sm text-red-600">{errors.minimumFee.message}</p>
+                    )}
                   </div>
 
                   {/* Current Rate */}
                   <div>
-                    <Label htmlFor="currentRate">Current Rate (Optional)</Label>
+                    <Label htmlFor="currentRate">Current Rate <span className="text-gray-500 font-normal">(Optional)</span></Label>
                     <div className="relative">
                       <Input
                         id="currentRate"
                         type="number"
                         step="0.01"
-                        {...register('currentRate')}
+                        min="0"
+                        max="100"
+                        {...register('currentRate', {
+                          min: { value: 0, message: 'Rate cannot be negative' },
+                          max: { value: 100, message: 'Rate cannot exceed 100%' },
+                          validate: (value) => !value || (parseFloat(value) >= 0 && parseFloat(value) <= 100) || 'Rate must be between 0 and 100'
+                        })}
                         placeholder="Enter current rate"
                         className={currentRate ? 'pr-8' : ''}
                       />
@@ -288,6 +319,9 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                         <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">%</span>
                       )}
                     </div>
+                    {errors.currentRate && (
+                      <p className="mt-1 text-sm text-red-600">{errors.currentRate.message}</p>
+                    )}
                   </div>
 
                   {/* Submit Button */}
