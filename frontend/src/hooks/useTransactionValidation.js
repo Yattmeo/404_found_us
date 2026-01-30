@@ -15,7 +15,7 @@ const DEFAULT_TRANSACTION = {
 };
 
 export const useTransactionValidation = () => {
-  const [transactions, setTransactions] = useState([DEFAULT_TRANSACTION]);
+  const [transactions, setTransactions] = useState([{ ...DEFAULT_TRANSACTION }]);
   const [validationErrors, setValidationErrors] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState([]);
