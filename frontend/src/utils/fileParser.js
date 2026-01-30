@@ -2,7 +2,7 @@
  * File parsing utilities - Consolidated file parsing logic
  */
 import * as XLSX from 'xlsx';
-import { validateDate, validateAmount, validateRequired } from './validators';
+import { validateDate, validateAmount } from './validators';
 
 /**
  * Parse CSV or Excel file
