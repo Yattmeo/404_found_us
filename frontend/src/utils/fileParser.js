@@ -169,6 +169,51 @@ export const validateFileStructure = (lines, requiredColumns) => {
       });
     }
 
+    // Validate permissible values for card_brand
+    if (row['card_brand'] && !['Visa', 'Mastercard'].includes(row['card_brand'])) {
+      errors.push({
+        row: i,
+        column: 'card_brand',
+        error: 'card_brand must be Visa or Mastercard',
+      });
+    }
+
+    // Validate permissible values for transaction_type
+    if (row['transaction_type'] && !['Online', 'Offline'].includes(row['transaction_type'])) {
+      errors.push({
+        row: i,
+        column: 'transaction_type',
+        error: 'transaction_type must be Online or Offline',
+      });
+    }
+
+    // Validate permissible values for card_type
+    if (row['card_type'] && !['Debit', 'Credit', 'Debit (Prepaid)'].includes(row['card_type'])) {
+      errors.push({
+        row: i,
+        column: 'card_type',
+        error: 'card_type must be Debit, Credit, or Debit (Prepaid)',
+      });
+    }
+
+    // Validate transaction_id is 7-digit integer
+    if (row['transaction_id'] && !/^\d{7}$/.test(row['transaction_id'])) {
+      errors.push({
+        row: i,
+        column: 'transaction_id',
+        error: 'transaction_id must be a 7-digit integer',
+      });
+    }
+
+    // Validate merchant_id is 6-digit integer
+    if (row['merchant_id'] && !/^\d{6}$/.test(row['merchant_id'])) {
+      errors.push({
+        row: i,
+        column: 'merchant_id',
+        error: 'merchant_id must be a 6-digit integer',
+      });
+    }
+
     // Only add row if no errors for this row
     if (errors.filter((e) => e.row === i).length === 0) {
       data.push(row);

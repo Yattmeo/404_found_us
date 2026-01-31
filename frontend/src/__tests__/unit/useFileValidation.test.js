@@ -5,8 +5,36 @@
 import { renderHook, act } from '@testing-library/react';
 import { useFileValidation } from '../../hooks/useFileValidation';
 
+
 describe('useFileValidation hook', () => {
-  const REQUIRED_COLUMNS = ['transaction_id', 'transaction_date', 'merchant_id', 'amount', 'transaction_type', 'card_type'];
+  // Updated required columns to match new schema
+  const REQUIRED_COLUMNS = [
+    'transaction_id',
+    'transaction_date',
+    'card_brand', // new field
+    'merchant_id',
+    'amount',
+    'transaction_type', // permissible: Online, Offline
+    'card_type' // permissible: Debit, Credit, Debit (Prepaid)
+  ];
+  describe('File type rejection', () => {
+    it('should reject non-CSV and non-Excel files', async () => {
+      const { result } = renderHook(() => useFileValidation(REQUIRED_COLUMNS));
+
+      // Mock a .txt file
+      const mockFile = new File(["dummy content"], "test.txt", { type: "text/plain" });
+
+      await act(async () => {
+        await result.current.handleFile(mockFile);
+      });
+
+      // fileError is a generic message, actual error is in validationErrors[0].error
+      expect(result.current.fileError).toMatch(/Validation failed/i);
+      expect(result.current.validationErrors.length).toBeGreaterThan(0);
+      expect(result.current.validationErrors[0].error).toMatch(/Invalid file type/i);
+      expect(result.current.showPreview).toBe(false);
+    });
+  });
 
   describe('Initial state', () => {
     it('should initialize with empty state', () => {
