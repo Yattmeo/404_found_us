@@ -4,7 +4,7 @@
     "product": "Small Ticket Fee Program (All)",
     "mcc": null,
     "mcc_category": null,
-    "percent_rate": 0.016,
+    "percent_rate": 1.6,
     "fixed_rate": 0.05
   },
   {
@@ -12,50 +12,50 @@
     "product": "Small Ticket Fee Program (All)",
     "mcc": null,
     "mcc_category": null,
+    "percent_rate": 5.0,
+    "fixed_rate": 0.21
+  },
+  {
+    "card_type": "Credit",
+    "product": "Small Ticket Fee Program (All)",
+    "mcc": null,
+    "mcc_category": null,
+    "percent_rate": 2.2,
+    "fixed_rate": 0.04,
+    "min_fee": 0.04
+  },
+  {
+    "card_type": "Super Premium Credit",
+    "product": "Small Ticket Fee Program (All)",
+    "mcc": null,
+    "mcc_category": null,
+    "percent_rate": 2.2,
+    "fixed_rate": 0.04,
+    "min_fee": 0.04
+  },
+
+  {
+    "card_type": "Prepaid",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5499,
+    "mcc_category": null,
+    "percent_rate": 1.15,
+    "fixed_rate": 0.15
+  },
+  {
+    "card_type": "Debit",
+    "product": "Industry Fee Program (All)",
+    "mcc": 5499,
+    "mcc_category": null,
     "percent_rate": 0.05,
     "fixed_rate": 0.21
   },
   {
     "card_type": "Credit",
-    "product": "Small Ticket Fee Program (All)",
-    "mcc": null,
-    "mcc_category": null,
-    "percent_rate": 0.022,
-    "fixed_rate": 0.04,
-    "min_fee": 0.04
-  },
-  {
-    "card_type": "Super Premium Credit",
-    "product": "Small Ticket Fee Program (All)",
-    "mcc": null,
-    "mcc_category": null,
-    "percent_rate": 0.022,
-    "fixed_rate": 0.04,
-    "min_fee": 0.04
-  },
-
-  {
-    "card_type": "Prepaid",
     "product": "Industry Fee Program (All)",
     "mcc": 5499,
     "mcc_category": null,
-    "percent_rate": 0.0115,
-    "fixed_rate": 0.15
-  },
-  {
-    "card_type": "Debit",
-    "product": "Industry Fee Program (All)",
-    "mcc": 5499,
-    "mcc_category": null,
-    "percent_rate": 0.005,
-    "fixed_rate": 0.21
-  },
-  {
-    "card_type": "Credit",
-    "product": "Industry Fee Program (All)",
-    "mcc": 5499,
-    "mcc_category": null,
-    "percent_rate": 0.0165,
+    "percent_rate": 1.65,
     "fixed_rate": 0.10
   },
   {
@@ -63,7 +63,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5499,
     "mcc_category": null,
-    "percent_rate": 0.023,
+    "percent_rate": 2.3,
     "fixed_rate": 0.10
   },
 
@@ -72,7 +72,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 4121,
     "mcc_category": null,
-    "percent_rate": 0.0115,
+    "percent_rate": 1.15,
     "fixed_rate": 0.15
   },
   {
@@ -80,7 +80,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 4121,
     "mcc_category": null,
-    "percent_rate": 0.005,
+    "percent_rate": 0.05,
     "fixed_rate": 0.21
   },
   {
@@ -88,7 +88,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 4121,
     "mcc_category": null,
-    "percent_rate": 0.0225,
+    "percent_rate": 2.25,
     "fixed_rate": 0.10
   },
   {
@@ -96,7 +96,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 4121,
     "mcc_category": null,
-    "percent_rate": 0.0255,
+    "percent_rate": 2.55,
     "fixed_rate": 0.10
   },
 
@@ -105,7 +105,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5411,
     "mcc_category": null,
-    "percent_rate": 0.0115,
+    "percent_rate": 1.15,
     "fixed_rate": 0.15,
     "max_fee": 0.35
   },
@@ -114,7 +114,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5411,
     "mcc_category": null,
-    "percent_rate": 0.005,
+    "percent_rate": 0.05,
     "fixed_rate": 0.21
   },
   {
@@ -122,7 +122,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5411,
     "mcc_category": null,
-    "percent_rate": 0.0155,
+    "percent_rate": 1.55,
     "fixed_rate": 0.05
   },
   {
@@ -130,7 +130,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5411,
     "mcc_category": null,
-    "percent_rate": 0.0165,
+    "percent_rate": 1.65,
     "fixed_rate": 0.05
   },
 
@@ -139,7 +139,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5812,
     "mcc_category": null,
-    "percent_rate": 0.0115,
+    "percent_rate": 1.15,
     "fixed_rate": 0.15
   },
   {
@@ -147,7 +147,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5812,
     "mcc_category": null,
-    "percent_rate": 0.005,
+    "percent_rate": 0.05,
     "fixed_rate": 0.21
   },
   {
@@ -155,7 +155,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5812,
     "mcc_category": null,
-    "percent_rate": 0.026,
+    "percent_rate": 2.6,
     "fixed_rate": 0.04,
     "min_fee": 0.04
   },
@@ -164,7 +164,7 @@
     "product": "Industry Fee Program (All)",
     "mcc": 5812,
     "mcc_category": null,
-    "percent_rate": 0.026,
+    "percent_rate": 2.6,
     "fixed_rate": 0.04,
     "min_fee": 0.04
   }

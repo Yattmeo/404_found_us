@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
-NUM_ROWS = 1000
+NUM_ROWS = 20000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_FILE = os.path.join(SCRIPT_DIR, "dummy_transactions.csv")
 

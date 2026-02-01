@@ -1,12 +1,12 @@
 [
   {
     "fee_name": "Mastercard Acquirer Brand Volume (Assessment Fee)",
-    "percent_rate": 0.0013,
+    "percent_rate": 0.13,
     "fixed_rate": 0
   },
   {
     "fee_name": "Transactions => 1000 USD (Assessment Fee)",
-    "percent_rate": 0.0001,
+    "percent_rate": 0.01,
     "fixed_rate": 0
   },
   {

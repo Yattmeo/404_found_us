@@ -8,12 +8,22 @@ from pathlib import Path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COST_STRUCTURE_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "cost_structure")
 MASTERCARD_FEE_FILE = os.path.join(COST_STRUCTURE_DIR, "masterCard_Card.JSON")
+VISA_FEE_FILE = os.path.join(COST_STRUCTURE_DIR, "visa_Card.JSON")
 
 # --- HELPERS ---
-def load_fee_structure():
-    """Load Mastercard fee structure from JSON"""
-    with open(MASTERCARD_FEE_FILE, 'r') as f:
-        return json.load(f)
+def load_fee_structure(card_brand):
+    """Load fee structure from JSON based on card brand"""
+    if card_brand == "Mastercard":
+        with open(MASTERCARD_FEE_FILE, 'r') as f:
+            return json.load(f)
+    elif card_brand == "Visa":
+        with open(VISA_FEE_FILE, 'r') as f:
+            return json.load(f)
+    elif card_brand == "Amex":
+        # No Amex fee structure available
+        return None
+    else:
+        return None
 
 def normalize_card_type(card_type):
     """Normalize card type from transaction data to match fee structure"""
@@ -21,33 +31,48 @@ def normalize_card_type(card_type):
         return "Prepaid"
     return card_type
 
-def find_matching_fee(card_type, mcc, amount, fee_structure):
+def find_matching_fee(card_brand, card_type, mcc, amount):
     """
     Find matching fee structure for a transaction.
-    Priority: Small Ticket Fee Program if amount < $5, otherwise Industry Fee Program by MCC
+    Logic order:
+    1. Check card_brand (Mastercard/Visa/Amex)
+    2. Check amount to determine product:
+       - < $5: Small Ticket Fee Program
+       - >= $5: Industry Fee Program (based on MCC)
+    3. Match card_type
     """
+    # Step 1: Check card brand and load appropriate fee structure
+    fee_structure = load_fee_structure(card_brand)
+    
+    # If no fee structure (e.g., Amex), return None
+    if fee_structure is None:
+        return None
+    
+    # Step 2: Determine product based on amount
+    if amount < 5.0:
+        # Small Ticket Fee Program
+        product = "Small Ticket Fee Program (All)"
+        target_mcc = None
+    else:
+        # Industry Fee Program (based on MCC)
+        product = "Industry Fee Program (All)"
+        target_mcc = mcc
+    
+    # Step 3: Normalize card type and find matching fee
     normalized_card_type = normalize_card_type(card_type)
     
-    # Special rule: amounts less than $5 use Small Ticket Fee Program
-    if amount < 5.0:
-        for fee in fee_structure:
-            if (fee["card_type"] == normalized_card_type and 
-                fee["product"] == "Small Ticket Fee Program (All)" and 
-                fee["mcc"] is None):
-                return fee
-    
-    # Otherwise, try to match by MCC and card type
     for fee in fee_structure:
         if (fee["card_type"] == normalized_card_type and 
-            fee["mcc"] == mcc):
+            fee["product"] == product and 
+            fee["mcc"] == target_mcc):
             return fee
     
-    # Fallback: if no MCC match, return None (will be handled separately)
+    # No match found
     return None
 
 def calculate_cost(amount, percent_rate, fixed_rate, max_fee=None):
     """Calculate transaction cost based on percent and fixed rates"""
-    cost = (amount * percent_rate) + fixed_rate
+    cost = (amount * percent_rate/100) + fixed_rate
     
     # Apply max_fee cap if specified
     if max_fee is not None:
@@ -59,7 +84,6 @@ def process_transactions(csv_path, mcc):
     """Process transactions and add cost calculation columns"""
     # Load data
     df = pd.read_csv(csv_path)
-    fee_structure = load_fee_structure()
     
     # Initialize new columns
     df['mcc'] = mcc
@@ -78,8 +102,8 @@ def process_transactions(csv_path, mcc):
             df.at[idx, 'match_found'] = False
             continue
         
-        # Find matching fee structure
-        fee = find_matching_fee(row['card_type'], mcc, row['amount'], fee_structure)
+        # Find matching fee structure (card_brand is checked first)
+        fee = find_matching_fee(row['card_brand'], row['card_type'], mcc, row['amount'])
         
         if fee:
             df.at[idx, 'product'] = fee['product']
