@@ -109,7 +109,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                         {results.profitDistribution.map((bar, idx) => (
                           <div key={idx} className="flex flex-col items-center flex-1">
                             <div
-                              className="w-full bg-orange-500 rounded-t transition-all hover:bg-orange-600"
+                              className="w-full bg-[#44D62C] rounded-t transition-all hover:bg-[#3BC424]"
                               style={{ height: `${(bar.value / 60) * 100}%` }}
                             ></div>
                             <span className="text-xs text-gray-600 mt-1">{bar.label}</span>

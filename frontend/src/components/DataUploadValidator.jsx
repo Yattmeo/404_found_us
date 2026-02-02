@@ -323,7 +323,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
         <>
           <div
             className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-colors ${
-              dragActive ? 'border-amber-500 bg-amber-50' : 'border-gray-300 hover:border-amber-400'
+              dragActive ? 'border-[#44D62C] bg-green-50' : 'border-gray-300 hover:border-[#44D62C]'
             }`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
@@ -341,7 +341,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
             <div className="space-y-4">
               {isValidating ? (
                 <div className="flex flex-col items-center gap-2">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#44D62C]"></div>
                   <p className="text-sm text-gray-600">Validating file...</p>
                 </div>
               ) : fileName && validationErrors.length > 0 ? (
@@ -352,7 +352,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                     <p className="text-sm text-red-600 mt-1">{validationErrors.length} validation error(s) found</p>
                   </div>
                   <label htmlFor="file-upload" className="cursor-pointer">
-                    <span className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
+                    <span className="inline-flex items-center gap-2 px-4 py-2 bg-[#44D62C] hover:bg-[#3BC424] text-white rounded-lg font-medium text-sm transition-colors">
                       <Upload className="w-4 h-4" />
                       Re-upload File
                     </span>
@@ -369,7 +369,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                   <Upload className="w-12 h-12 text-gray-400 mx-auto" />
                   <div>
                     <label htmlFor="file-upload" className="cursor-pointer">
-                      <span className="text-amber-600 hover:text-amber-700 font-medium">Click to upload</span>
+                      <span className="text-[#44D62C] hover:text-[#3BC424] font-medium">Click to upload</span>
                       <span className="text-gray-600"> or drag and drop</span>
                     </label>
                     <p className="text-xs text-gray-500 mt-1">CSV or Excel files (.csv, .xlsx, .xls)</p>
@@ -381,7 +381,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                           e.stopPropagation();
                           handleDownloadTemplate();
                         }}
-                        className="text-amber-600 hover:text-amber-700 underline font-medium"
+                        className="text-[#44D62C] hover:text-[#3BC424] underline font-medium"
                       >
                         Download Template
                       </button>

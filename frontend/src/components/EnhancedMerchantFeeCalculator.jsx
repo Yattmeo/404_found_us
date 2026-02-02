@@ -107,31 +107,38 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
 
   // Show form page
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-8">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 flex items-center justify-center p-8">
       <div className="w-full max-w-6xl">
         {/* Back Button */}
         <button
           onClick={onBackToLanding}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-6"
+          className="flex items-center gap-2 text-gray-600 hover:text-[#44D62C] transition-colors mb-6 font-medium"
         >
           <ArrowLeft className="w-5 h-5" />
-          <span className="font-medium">Back to Home</span>
+          <span>Back to Home</span>
         </button>
 
         {/* Split Layout Container */}
         <div className="bg-white rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-5">
-          {/* Left Panel - Orange Branding */}
-          <div className="lg:col-span-2 bg-gradient-to-br from-amber-500 to-orange-600 p-12 flex flex-col justify-between relative overflow-hidden">
+          {/* Left Panel - Green Branding */}
+          <div className="lg:col-span-2 bg-gradient-to-br from-[#44D62C] to-[#2FA51F] p-12 flex flex-col justify-between relative overflow-hidden">
+            {/* Curved overlay */}
+            <div className="absolute top-0 right-0 w-full h-full">
+              <svg className="absolute -right-1 top-0 h-full w-20" viewBox="0 0 100 800" preserveAspectRatio="none">
+                <path d="M0,0 Q50,400 0,800 L100,800 L100,0 Z" fill="white" opacity="0.05"/>
+              </svg>
+            </div>
+            
             {/* Decorative circles */}
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
             <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2"></div>
             
             <div className="relative z-10">
               {/* Title */}
-              <h1 className="text-4xl font-bold text-white mb-4">
+              <h1 className="text-4xl font-bold text-[#FFFFFF] mb-4">
                 Merchant Profitability Calculator
               </h1>
-              <p className="text-orange-100 text-lg leading-relaxed">
+              <p className="text-[#FFFFFF] opacity-90 text-lg leading-relaxed">
                 Assess profitability based on current merchant rates and transaction data. Upload your data or enter it manually to get started.
               </p>
             </div>
@@ -153,10 +160,10 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
               {!dataValidated && (
                 <div className="space-y-4">
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-900 mb-1">
+                    <h2 className="text-xl font-semibold text-[#313131] mb-1">
                       Step 1: Transaction Data
                     </h2>
-                    <p className="text-sm text-gray-600">
+                    <p className="text-sm text-[#313131] opacity-70">
                       Upload a CSV file or enter transactions manually
                     </p>
                   </div>
@@ -199,7 +206,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                       <button
                         type="button"
                         onClick={() => setDataValidated(false)}
-                        className="flex items-center gap-1 text-sm text-orange-600 hover:text-orange-700 font-medium"
+                        className="flex items-center gap-1 text-sm text-[#44D62C] hover:text-[#3BC424] font-medium"
                       >
                         <ArrowLeft className="w-4 h-4" />
                         Back
@@ -227,7 +234,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                     <select
                       id="feeStructure"
                       {...register('feeStructure', { required: 'Please select a fee structure' })}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#44D62C] focus:border-[#44D62C] bg-white"
                     >
                       <option value="">Select structure</option>
                       <option value="percentage">% (Percentage only)</option>

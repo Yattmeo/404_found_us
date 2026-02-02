@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Upload, FileCheck, ArrowLeft, Download, AlertCircle, X } from 'lucide-react';
+import { Upload, FileCheck, ArrowLeft, Download, AlertCircle, X, TrendingUp } from 'lucide-react';
 import DesiredMarginResults from './DesiredMarginResults';
 import MCCDropdown from './MCCDropdown';
 import { Button } from './ui/Button';
@@ -422,31 +422,65 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-8">
-      <div className="w-full max-w-4xl">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 flex items-center justify-center p-8">
+      <div className="w-full max-w-6xl">
         {/* Back Button */}
         <button
           onClick={onBackToLanding}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-6"
+          className="flex items-center gap-2 text-gray-600 hover:text-[#44D62C] transition-colors mb-6 font-medium"
         >
           <ArrowLeft className="w-5 h-5" />
-          <span className="font-medium">Back to Home</span>
+          <span>Back to Home</span>
         </button>
 
-        {/* Main Form Container */}
-        <div className="bg-white rounded-3xl shadow-xl p-12">
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+        {/* Split Layout Container with Curved Design */}
+        <div className="bg-white rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-5">
+          {/* Left Panel - Green Branding with Curve */}
+          <div className="lg:col-span-2 bg-gradient-to-br from-[#44D62C] to-[#2FA51F] p-12 flex flex-col justify-between relative overflow-hidden">
+            {/* Curved overlay */}
+            <div className="absolute top-0 right-0 w-full h-full">
+              <svg className="absolute -right-1 top-0 h-full w-20" viewBox="0 0 100 800" preserveAspectRatio="none">
+                <path d="M0,0 Q50,400 0,800 L100,800 L100,0 Z" fill="white" opacity="0.05"/>
+              </svg>
+            </div>
+            
+            {/* Decorative circles */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+            <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2"></div>
+            
+            <div className="relative z-10">
+              <h1 className="text-4xl font-bold text-[#FFFFFF] mb-4">
+                Desired Margin Calculator
+              </h1>
+              <p className="text-[#FFFFFF] opacity-90 text-lg leading-relaxed">
+                Calculate the optimal rates to quote your merchants. Upload transaction data and set your desired margin to get personalized rate recommendations.
+              </p>
+            </div>
+
+            {/* Illustration placeholder */}
+            <div className="relative z-10 mt-8">
+              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/20">
+                <div className="flex items-center justify-center h-48">
+                  <TrendingUp className="w-24 h-24 text-white/60" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Panel - Form */}
+          <div className="lg:col-span-3 p-12">
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
             {/* Merchant Transaction Data */}
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">
+              <h2 className="text-2xl font-bold text-[#313131] mb-6">
                 Merchant Transaction Data
               </h2>
 
               <div 
                 className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
                   fileError ? 'border-red-300 bg-red-50' : 
-                  dragActive ? 'border-orange-500 bg-orange-50' : 
-                  'border-gray-300 bg-gray-50 hover:border-orange-400'
+                  dragActive ? 'border-[#44D62C] bg-green-50' : 
+                  'border-gray-300 bg-gray-50 hover:border-[#44D62C]'
                 }`}
                 onDragEnter={handleDrag}
                 onDragLeave={handleDrag}
@@ -469,7 +503,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                       <p className="text-sm text-red-600 mt-1">{fileError}</p>
                     </div>
                     <label htmlFor="file-upload" className="cursor-pointer">
-                      <span className="text-orange-600 hover:text-orange-700 font-medium text-sm">Try another file</span>
+                      <span className="text-[#44D62C] hover:text-[#3BC424] font-medium text-sm">Try another file</span>
                     </label>
                   </div>
                 ) : fileName && parsedData ? (
@@ -484,7 +518,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                   <>
                     <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                     <label htmlFor="file-upload" className="cursor-pointer block">
-                      <span className="text-orange-600 hover:text-orange-700 font-medium">Upload CSV or Excel file</span>
+                      <span className="text-[#44D62C] hover:text-[#3BC424] font-medium">Upload CSV or Excel file</span>
                     </label>
                   </>
                 )}
@@ -526,7 +560,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                 {...register('feeStructure', {
                   required: 'Fee structure is required'
                 })}
-                className="mt-2 w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent bg-white text-gray-700"
+                className="mt-2 w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#44D62C] focus:border-[#44D62C] bg-white text-gray-700"
               >
                 <option value="">Select structure</option>
                 <option value="percentage">% (Percentage only)</option>
@@ -608,11 +642,12 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
             <Button
               type="submit"
               disabled={isLoading || !parsedData || !mcc || !feeStructure}
-              className="w-full bg-orange-500 hover:bg-orange-600 text-white font-semibold py-4 text-lg rounded-xl disabled:bg-gray-300 disabled:cursor-not-allowed"
+              className="w-full bg-[#44D62C] hover:bg-[#3BC424] text-white font-semibold py-4 text-lg rounded-xl disabled:bg-gray-300 disabled:cursor-not-allowed"
             >
               {isLoading ? 'Calculating...' : 'Calculate Results'}
             </Button>
           </form>
+          </div>
         </div>
       </div>
     </div>

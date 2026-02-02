@@ -51,7 +51,7 @@ const MCCDropdown = ({ value, onChange, error }) => {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`w-full flex items-center justify-between px-4 py-3 border rounded-2xl focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white text-left ${
+        className={`w-full flex items-center justify-between px-4 py-3 border rounded-2xl focus:ring-2 focus:ring-[#44D62C] focus:border-[#44D62C] bg-white text-left ${
           error ? 'border-red-500' : 'border-gray-300'
         }`}
       >
@@ -75,7 +75,7 @@ const MCCDropdown = ({ value, onChange, error }) => {
                   handleCustomSubmit();
                 }
               }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#44D62C] focus:border-[#44D62C] text-sm"
             />
           </div>
           <div className="max-h-60 overflow-y-auto">
@@ -87,7 +87,7 @@ const MCCDropdown = ({ value, onChange, error }) => {
                 {search.trim() && (
                   <button
                     onClick={handleCustomSubmit}
-                    className="w-full px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
+                    className="w-full px-4 py-2 bg-[#44D62C] hover:bg-[#3BC424] text-white rounded-lg text-sm font-medium transition-colors"
                   >
                     Use "{search.trim()}" as custom MCC
                   </button>
@@ -104,15 +104,15 @@ const MCCDropdown = ({ value, onChange, error }) => {
                       setSearch('');
                       setCustomMode(false);
                     }}
-                    className={`px-4 py-3 cursor-pointer hover:bg-amber-50 transition-colors flex items-center justify-between ${
-                      value === mcc.code ? 'bg-amber-50' : ''
+                    className={`px-4 py-3 cursor-pointer hover:bg-green-50 transition-colors flex items-center justify-between ${
+                      value === mcc.code ? 'bg-green-50' : ''
                     }`}
                   >
                     <div>
                       <div className="font-medium text-sm text-gray-900">{mcc.code}</div>
                       <div className="text-xs text-gray-600">{mcc.description}</div>
                     </div>
-                    {value === mcc.code && <Check className="w-4 h-4 text-amber-600" />}
+                    {value === mcc.code && <Check className="w-4 h-4 text-[#44D62C]" />}
                   </div>
                 ))}
                 {search.trim() && (

@@ -361,7 +361,7 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
                       value={transaction.transaction_type}
                       onChange={(e) => updateTransaction(index, 'transaction_type', e.target.value)}
                       placeholder="Select or type"
-                      className={`w-full h-8 px-2 py-1 border rounded-lg focus:ring-2 focus:ring-amber-500 text-xs ${
+                      className={`w-full h-8 px-2 py-1 border rounded-lg focus:ring-2 focus:ring-[#44D62C] text-xs ${
                         rowErrors.some(e => e.column === 'transaction_type') ? 'border-red-500' : 'border-gray-300'
                       }`}
                     />
@@ -379,7 +379,7 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
                       value={transaction.card_type}
                       onChange={(e) => updateTransaction(index, 'card_type', e.target.value)}
                       placeholder="Select or type"
-                      className={`w-full h-8 px-2 py-1 border rounded-lg focus:ring-2 focus:ring-amber-500 text-xs ${
+                      className={`w-full h-8 px-2 py-1 border rounded-lg focus:ring-2 focus:ring-[#44D62C] text-xs ${
                         rowErrors.some(e => e.column === 'card_type') ? 'border-red-500' : 'border-gray-300'
                       }`}
                     />

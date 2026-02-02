@@ -3,14 +3,14 @@ import { Calculator, TrendingUp, ArrowRight } from 'lucide-react';
 
 const LandingPage = ({ onNavigate }) => {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex items-center justify-center p-8">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 flex items-center justify-center p-8">
       <div className="max-w-5xl w-full">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-gray-900 mb-4">
+          <h1 className="text-5xl font-bold text-[#313131] mb-4">
             Merchant Fee Calculator
           </h1>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+          <p className="text-xl text-[#313131] opacity-70 max-w-2xl mx-auto">
             Get started with your pricing analysis
           </p>
         </div>
@@ -32,7 +32,7 @@ const LandingPage = ({ onNavigate }) => {
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent"></div>
               
               {/* Icon on image */}
-              <div className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shadow-lg">
+              <div className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-2xl bg-[#44D62C] hover:bg-[#3BC424] flex items-center justify-center group-hover:scale-110 transition-all duration-300 shadow-lg">
                 <Calculator className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-white" />
               </div>
             </div>
@@ -52,9 +52,9 @@ const LandingPage = ({ onNavigate }) => {
                   e.stopPropagation();
                   onNavigate('current-rates');
                 }}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 sm:px-6 sm:py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm sm:text-base rounded-2xl group-hover:scale-105 transition-all duration-300 shadow-md hover:shadow-lg"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 sm:px-8 sm:py-4 bg-[#44D62C] hover:bg-[#3BC424] text-white text-sm sm:text-base font-semibold rounded-xl group-hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-xl"
               >
-                <span className="font-medium">Get Started</span>
+                <span>Get Started</span>
                 <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
             </div>
@@ -75,7 +75,7 @@ const LandingPage = ({ onNavigate }) => {
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent"></div>
               
               {/* Icon on image */}
-              <div className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shadow-lg">
+              <div className="absolute bottom-3 left-3 sm:bottom-4 sm:left-4 w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-2xl bg-[#44D62C] hover:bg-[#3BC424] flex items-center justify-center group-hover:scale-110 transition-all duration-300 shadow-lg">
                 <TrendingUp className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-white" />
               </div>
             </div>
@@ -95,9 +95,9 @@ const LandingPage = ({ onNavigate }) => {
                   e.stopPropagation();
                   onNavigate('desired-margin');
                 }}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 sm:px-6 sm:py-3 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white text-sm sm:text-base rounded-2xl group-hover:scale-105 transition-all duration-300 shadow-md hover:shadow-lg"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 sm:px-8 sm:py-4 bg-[#44D62C] hover:bg-[#3BC424] text-white text-sm sm:text-base font-semibold rounded-xl group-hover:scale-105 transition-all duration-300 shadow-lg hover:shadow-xl"
               >
-                <span className="font-medium">Get Started</span>
+                <span>Get Started</span>
                 <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
             </div>
