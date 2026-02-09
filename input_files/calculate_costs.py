@@ -258,6 +258,60 @@ def display_metrics(df):
     transaction_count = len(valid_df)
     effective_rate = (total_cost / total_volume * 100) if total_volume > 0 else 0
     
+    # Calculate weekly variance and linear regression if timestamp column exists
+    weekly_variance = None
+    weekly_std = None
+    weekly_cv = None
+    weekly_mean = None
+    regression_slope = None
+    regression_intercept = None
+    regression_r_squared = None
+    date_column = None
+    
+    # Check for date/timestamp column
+    if 'date' in valid_df.columns:
+        date_column = 'date'
+    elif 'timestamp' in valid_df.columns:
+        date_column = 'timestamp'
+    
+    if date_column and len(valid_df) > 0:
+        try:
+            # Convert date to datetime if it's not already
+            temp_df = valid_df.copy()
+            temp_df[date_column] = pd.to_datetime(temp_df[date_column])
+            
+            # Extract week of year and year
+            temp_df['year_week'] = temp_df[date_column].dt.strftime('%Y-%W')
+            
+            # Group by week and sum total costs
+            weekly_costs = temp_df.groupby('year_week')['total_cost'].sum()
+            
+            if len(weekly_costs) > 1:  # Need at least 2 weeks for variance
+                weekly_variance = weekly_costs.var()
+                weekly_std = weekly_costs.std()
+                weekly_mean = weekly_costs.mean()
+                weekly_cv = (weekly_std / weekly_mean * 100) if weekly_mean > 0 else 0
+                
+                # Perform linear regression: Y = mX + C
+                # X = week number (0, 1, 2, ...), Y = weekly cost
+                X = np.arange(len(weekly_costs))
+                Y = weekly_costs.values.astype(float)  # Convert to float for numpy
+                
+                # Calculate slope (m) and intercept (C)
+                # Using numpy polyfit (degree 1 for linear)
+                coefficients = np.polyfit(X, Y, 1)
+                regression_slope = coefficients[0]  # m
+                regression_intercept = coefficients[1]  # C
+                
+                # Calculate R-squared for goodness of fit
+                y_pred = regression_slope * X + regression_intercept
+                ss_res = np.sum((Y - y_pred) ** 2)
+                ss_tot = np.sum((Y - np.mean(Y)) ** 2)
+                regression_r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+        except Exception:
+            # If there's any error processing timestamps, skip variance calculation
+            pass
+    
     output.append(f"\n📊 OVERALL METRICS:")
     output.append(f"   Total Transactions:     {transaction_count:,}")
     output.append(f"   Total Volume:           ${total_volume:,.2f}")
@@ -269,6 +323,33 @@ def display_metrics(df):
         output.append(f"   Average Cost/Txn:       ${total_cost/transaction_count:.4f}")
     else:
         output.append("   Average Cost/Txn:       N/A")
+    
+    # Display variance metrics if available
+    if weekly_variance is not None:
+        output.append(f"\n📈 WEEKLY COST VARIANCE:")
+        output.append(f"   Weekly Mean Cost:       ${weekly_mean:,.2f}")
+        output.append(f"   Weekly Std Deviation:   ${weekly_std:,.2f}")
+        output.append(f"   Variance (Absolute):    ${weekly_variance:,.2f}")
+        output.append(f"   Variance (Percentage):  {weekly_cv:.2f}% (Coefficient of Variation)")
+    
+    # Display linear regression results if available
+    if regression_slope is not None:
+        output.append(f"\n📊 WEEKLY COST TREND (Linear Regression):")
+        output.append(f"   Equation: Y = {regression_slope:.4f}X + {regression_intercept:.4f}")
+        output.append(f"   Where:")
+        output.append(f"      Y = Predicted Weekly Cost ($)")
+        output.append(f"      X = Week Number (0, 1, 2, ...)")
+        output.append(f"      Slope (m) = ${regression_slope:,.4f}/week")
+        output.append(f"      Intercept (C) = ${regression_intercept:,.2f}")
+        output.append(f"   R² (Goodness of Fit):   {regression_r_squared:.4f}")
+        
+        # Interpretation
+        if regression_slope > 0:
+            output.append(f"   📈 Trend: Costs are INCREASING by ${abs(regression_slope):.2f} per week")
+        elif regression_slope < 0:
+            output.append(f"   📉 Trend: Costs are DECREASING by ${abs(regression_slope):.2f} per week")
+        else:
+            output.append(f"   ➡️  Trend: Costs are STABLE (no significant change)")
     
     # By Product
     output.append(f"\n💳 BY PRODUCT:")
