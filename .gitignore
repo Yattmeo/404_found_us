@@ -9,6 +9,8 @@ dist/
 venv/
 env/
 .venv
+.pytest_cache
+.coverage
 
 # Node
 node_modules/
