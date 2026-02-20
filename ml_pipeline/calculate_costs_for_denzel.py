@@ -170,7 +170,7 @@ def calculate_cost(amount, percent_rate, fixed_rate, max_fee=None):
     
     return round(cost, 4)
 
-def process_transactions(csv_path, mcc):
+def process_transactions(csv_path):
     """Process transactions and add cost calculation columns"""
     # Load data based on file type
     file_extension = os.path.splitext(csv_path)[1].lower()
@@ -182,8 +182,11 @@ def process_transactions(csv_path, mcc):
     else:
         raise ValueError(f"Unsupported file type: {file_extension}. Expected .csv or .parquet")
     
+    # Check if 'mcc' column exists
+    if 'mcc' not in df.columns:
+        raise ValueError("Error: 'mcc' column not found in the input file. Please ensure the data contains an 'mcc' column.")
+    
     # Initialize new columns
-    df['mcc'] = mcc
     df['product'] = None
     df['percent_rate'] = None
     df['fixed_rate'] = None
@@ -206,7 +209,7 @@ def process_transactions(csv_path, mcc):
             continue
         
         # Find matching card fee structure (card_brand is checked first)
-        card_fee = find_matching_card_fee(row['card_brand'], row['card_type'], mcc, row['amount'])
+        card_fee = find_matching_card_fee(row['card_brand'], row['card_type'], row['mcc'], row['amount'])
         
         # Calculate card cost
         if card_fee:
@@ -431,16 +434,8 @@ def main():
     print("MASTERCARD TRANSACTION COST CALCULATOR")
     print("="*60)
     
-    # Prompt for MCC
-    mcc_input = input("\nEnter MCC code (e.g., 5812, 5411, 4121, 5499): ").strip()
-    try:
-        mcc = int(mcc_input)
-    except ValueError:
-        print("❌ Error: MCC must be a valid integer.")
-        return
-    
     # Prompt for CSV filename
-    csv_filename = input("Enter CSV filename (e.g., merch_001_transactions.csv): ").strip()
+    csv_filename = input("\nEnter CSV filename (e.g., merch_001_transactions.csv): ").strip()
     csv_path = os.path.join(SCRIPT_DIR, csv_filename)
     
     # Check if file exists
@@ -449,14 +444,14 @@ def main():
         return
     
     print(f"\n📁 Loading transactions from: {csv_filename}")
-    print(f"🏢 Processing with MCC: {mcc}")
+    print(f"🏢 Processing with MCC values from data...")
     
     # Process transactions
     try:
-        df = process_transactions(csv_path, mcc)
+        df = process_transactions(csv_path)
         
         # Save output with suffix
-        output_filename = csv_filename.replace('.csv', f'_with_costs_mcc{mcc}.csv')
+        output_filename = csv_filename.replace('.csv', '_with_costs.csv')
         output_path = os.path.join(SCRIPT_DIR, output_filename)
         df.to_csv(output_path, index=False)
         

@@ -11,6 +11,7 @@ env/
 .venv
 .pytest_cache
 .coverage
+hf_preprocessing.py
 
 # Node
 node_modules/
@@ -26,6 +27,7 @@ package-lock.json
 *.weights
 wandb/
 .ipynb_checkpoints/
+*.parquet
 
 # OS
 .DS_Store
