@@ -1,6 +1,0 @@
-﻿flask>=3.0.0
-scikit-learn>=1.4.0
-seaborn>=0.13.1
-wandb>=0.16.2
-pandas>=2.1.4
-numpy>=1.26.3
