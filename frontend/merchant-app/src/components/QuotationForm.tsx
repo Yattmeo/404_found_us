@@ -6,6 +6,27 @@ interface QuotationFormProps {
   onSubmit: (data: BusinessData) => void;
 }
 
+type FormErrors = {
+  businessName?: string;
+  industry?: string;
+  averageTransactionValue?: string;
+  monthlyTransactions?: string;
+  cardTypes?: string;
+};
+
+const industryOptions = [
+  { value: '5411 - General Grocery Stores', label: '5411 - General Grocery Stores' },
+  { value: '5732 - Electronics Stores', label: '5732 - Electronics Stores' },
+  { value: '5812 - Eating Places and Restaurants', label: '5812 - Eating Places and Restaurants' },
+  { value: '5814 - Fast Food Restaurants', label: '5814 - Fast Food Restaurants' },
+  { value: '5967 - Direct Marketing', label: '5967 - Direct Marketing' },
+  { value: '7011 - Lodging and Hotels', label: '7011 - Lodging and Hotels' },
+  { value: '7399 - Business Services', label: '7399 - Business Services' },
+  { value: '7999 - Recreation Services', label: '7999 - Recreation Services' },
+  { value: '8062 - Hospitals', label: '8062 - Hospitals' },
+  { value: '8999 - Professional Services', label: '8999 - Professional Services' },
+];
+
 export function QuotationForm({ onSubmit }: QuotationFormProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const totalSteps = 3;
@@ -15,7 +36,6 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
     industry: '',
     averageTransactionValue: '',
     monthlyTransactions: '',
-    paymentMethods: ['credit-debit-cards'],
     cardTypes: [],
     ecommercePercentage: '0',
     inPersonPercentage: '100',
@@ -23,12 +43,19 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
   });
 
   const [showDollarSign, setShowDollarSign] = useState(false);
+  const [errors, setErrors] = useState<FormErrors>({});
+
+  const preventNegativeNumericInput = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (['-', '+', 'e', 'E'].includes(event.key)) {
+      event.preventDefault();
+    }
+  };
 
   const updateField = (field: keyof BusinessData, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const toggleArrayValue = (field: 'paymentMethods' | 'cardTypes', value: string) => {
+  const toggleArrayValue = (field: 'cardTypes', value: string) => {
     setFormData((prev) => {
       const currentArray = prev[field];
       const newArray = currentArray.includes(value)
@@ -36,6 +63,86 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
         : [...currentArray, value];
       return { ...prev, [field]: newArray };
     });
+
+    setErrors((prev) => ({ ...prev, cardTypes: undefined }));
+  };
+
+  const validateBusinessName = () => {
+    const value = formData.businessName.trim();
+    if (!value) {
+      return 'Business Name is required.';
+    }
+    return undefined;
+  };
+
+  const validateIndustry = () => {
+    if (!formData.industry) {
+      return 'Industry is required.';
+    }
+    return undefined;
+  };
+
+  const validateAverageTransactionValue = () => {
+    const rawValue = formData.averageTransactionValue.trim();
+    if (!rawValue) {
+      return 'Average Transaction Value is required.';
+    }
+
+    if (!/^\d+(\.\d{1,2})?$/.test(rawValue)) {
+      return 'Use a valid amount with up to 2 decimal places.';
+    }
+
+    const parsedValue = Number(rawValue);
+    if (Number.isNaN(parsedValue) || parsedValue < 0) {
+      return 'Average Transaction Value must be 0 or more.';
+    }
+
+    return undefined;
+  };
+
+  const validateMonthlyTransactions = () => {
+    const rawValue = formData.monthlyTransactions.trim();
+    if (!rawValue) {
+      return 'Monthly Transactions is required.';
+    }
+
+    if (!/^\d+$/.test(rawValue)) {
+      return 'Monthly Transactions must be a whole number.';
+    }
+
+    if (parseInt(rawValue, 10) < 0) {
+      return 'Monthly Transactions must be 0 or more.';
+    }
+
+    return undefined;
+  };
+
+  const validateCardTypes = () => {
+    if (formData.cardTypes.length === 0) {
+      return 'Select at least one payment brand.';
+    }
+    return undefined;
+  };
+
+  const validateStep = (step: number) => {
+    const stepErrors: FormErrors = {};
+
+    if (step === 1) {
+      stepErrors.businessName = validateBusinessName();
+      stepErrors.industry = validateIndustry();
+    }
+
+    if (step === 2) {
+      stepErrors.averageTransactionValue = validateAverageTransactionValue();
+      stepErrors.monthlyTransactions = validateMonthlyTransactions();
+    }
+
+    if (step === 3) {
+      stepErrors.cardTypes = validateCardTypes();
+    }
+
+    setErrors((prev) => ({ ...prev, ...stepErrors }));
+    return Object.values(stepErrors).every((error) => !error);
   };
 
   const handlePercentageChange = (field: string, value: string) => {
@@ -93,7 +200,7 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
   };
 
   const nextStep = () => {
-    if (currentStep < totalSteps) {
+    if (currentStep < totalSteps && validateStep(currentStep)) {
       setCurrentStep(currentStep + 1);
     }
   };
@@ -106,15 +213,18 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validateStep(3)) {
+      return;
+    }
     onSubmit(formData);
   };
 
   const isStepValid = () => {
     switch (currentStep) {
       case 1:
-        return formData.businessName && formData.industry;
+        return !!formData.businessName.trim() && !!formData.industry;
       case 2:
-        return formData.averageTransactionValue && formData.monthlyTransactions;
+        return !!formData.averageTransactionValue.trim() && !!formData.monthlyTransactions.trim();
       case 3:
         return formData.cardTypes.length > 0;
       default:
@@ -153,11 +263,17 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
                   <input
                     type="text"
                     value={formData.businessName}
-                    onChange={(e) => updateField('businessName', e.target.value)}
+                    onChange={(e) => {
+                      updateField('businessName', e.target.value);
+                      if (errors.businessName) {
+                        setErrors((prev) => ({ ...prev, businessName: undefined }));
+                      }
+                    }}
                     className="merchant-focus-field w-full px-3 py-2.5 border border-gray-300 rounded-lg transition bg-gray-50 text-sm"
                     placeholder="Enter your business name"
                     required
                   />
+                  {errors.businessName && <p className="mt-1 text-xs text-red-600">{errors.businessName}</p>}
                 </div>
 
                 <div>
@@ -168,23 +284,24 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
                     <ChevronDown className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
                     <select
                       value={formData.industry}
-                      onChange={(e) => updateField('industry', e.target.value)}
+                      onChange={(e) => {
+                        updateField('industry', e.target.value);
+                        if (errors.industry) {
+                          setErrors((prev) => ({ ...prev, industry: undefined }));
+                        }
+                      }}
                       className="merchant-focus-field w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-lg transition bg-gray-50 appearance-none text-sm"
                       required
                     >
-                      <option value="">Select your industry</option>
-                      <option value="retail">Retail</option>
-                      <option value="ecommerce">E-commerce</option>
-                      <option value="hospitality">Hospitality</option>
-                      <option value="healthcare">Healthcare</option>
-                      <option value="professional-services">Professional Services</option>
-                      <option value="education">Education</option>
-                      <option value="nonprofit">Non-profit</option>
-                      <option value="technology">Technology</option>
-                      <option value="manufacturing">Manufacturing</option>
-                      <option value="other">Other</option>
+                      <option value="">Select MCC industry</option>
+                      {industryOptions.map((industry) => (
+                        <option key={industry.value} value={industry.value}>
+                          {industry.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
+                  {errors.industry && <p className="mt-1 text-xs text-red-600">{errors.industry}</p>}
                 </div>
               </div>
             </div>
@@ -232,9 +349,24 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
                     <input
                       type="number"
                       value={formData.averageTransactionValue}
-                      onChange={(e) => updateField('averageTransactionValue', e.target.value)}
+                      onKeyDown={preventNegativeNumericInput}
+                      onChange={(e) => {
+                        const newValue = e.target.value;
+                        if (/^\d*(\.\d{0,2})?$/.test(newValue)) {
+                          updateField('averageTransactionValue', newValue);
+                          if (errors.averageTransactionValue) {
+                            setErrors((prev) => ({ ...prev, averageTransactionValue: undefined }));
+                          }
+                        }
+                      }}
                       onFocus={() => setShowDollarSign(true)}
-                      onBlur={() => setShowDollarSign(false)}
+                      onBlur={() => {
+                        setShowDollarSign(false);
+                        const value = formData.averageTransactionValue.trim();
+                        if (value !== '' && /^\d+(\.\d{1,2})?$/.test(value)) {
+                          updateField('averageTransactionValue', Number(value).toFixed(2));
+                        }
+                      }}
                       className={`merchant-focus-field w-full ${showDollarSign && formData.averageTransactionValue ? 'pl-7' : 'pl-3'} pr-3 py-2.5 border border-gray-300 rounded-lg transition bg-gray-50 text-sm`}
                       placeholder="0.00"
                       step="0.01"
@@ -242,6 +374,7 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
                       required
                     />
                   </div>
+                  {errors.averageTransactionValue && <p className="mt-1 text-xs text-red-600">{errors.averageTransactionValue}</p>}
                 </div>
 
                 <div>
@@ -251,12 +384,22 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
                   <input
                     type="number"
                     value={formData.monthlyTransactions}
-                    onChange={(e) => updateField('monthlyTransactions', e.target.value)}
+                    onKeyDown={preventNegativeNumericInput}
+                    onChange={(e) => {
+                      const newValue = e.target.value;
+                      if (/^\d*$/.test(newValue)) {
+                        updateField('monthlyTransactions', newValue);
+                        if (errors.monthlyTransactions) {
+                          setErrors((prev) => ({ ...prev, monthlyTransactions: undefined }));
+                        }
+                      }
+                    }}
                     className="merchant-focus-field w-full px-3 py-2.5 border border-gray-300 rounded-lg transition bg-gray-50 text-sm"
                     placeholder="0"
                     min="0"
                     required
                   />
+                  {errors.monthlyTransactions && <p className="mt-1 text-xs text-red-600">{errors.monthlyTransactions}</p>}
                 </div>
 
                 <div className="bg-gradient-to-r from-blue-50 to-orange-50 p-3 rounded-lg border border-blue-100">
@@ -302,9 +445,9 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs text-gray-700 mb-3">
-                    Which card types do you need? *
+                    Payment Brands Accepted *
                   </label>
-                  <div className="space-y-3">
+                  <div className="space-y-3 mb-1">
                     {[
                       { value: 'visa', label: 'Visa' },
                       { value: 'mastercard', label: 'Mastercard' },
@@ -324,6 +467,7 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
                       </label>
                     ))}
                   </div>
+                  {errors.cardTypes && <p className="mt-1 text-xs text-red-600">{errors.cardTypes}</p>}
                 </div>
               </div>
             </div>

@@ -5,34 +5,32 @@ interface QuotationResultProps {
   businessData: BusinessData;
   quoteResult: QuoteResult;
   onStartOver: () => void;
+  isPlaceholderQuote?: boolean;
 }
 
-export function QuotationResult({ businessData, quoteResult, onStartOver }: QuotationResultProps) {
+export function QuotationResult({ businessData, quoteResult, onStartOver, isPlaceholderQuote = false }: QuotationResultProps) {
   const handlePrint = () => {
     window.print();
   };
 
-  // Calculate example costs for $100 purchase
-  const exampleAmount = 100;
-  const inPersonRate = quoteResult.transactionFee;
-  const onlineRate = quoteResult.transactionFee + 0.3; // Online typically higher
-  
-  const inPersonCost = Math.round((exampleAmount * inPersonRate) / 100 * 100); // in cents
-  const onlineCost = Math.round((exampleAmount * onlineRate) / 100 * 100); // in cents
-
-  // Format cost display (cents vs dollars)
-  const formatCost = (cents: number) => {
-    if (cents > 100) {
-      return `$${(cents / 100).toFixed(2)}`;
-    }
-    return `${cents} ¢`;
+  const formatCurrency = (value: number) => {
+    return `$${value.toFixed(2)}`;
   };
+
+  const acceptedBrands = quoteResult.quote_summary.payment_brands_accepted;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
-        <h2 className="text-gray-900 mb-2">Your Payment Processing Quote</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-gray-900">Your Payment Processing Quote</h2>
+          {isPlaceholderQuote && (
+            <span className="px-2 py-1 text-xs font-semibold rounded bg-amber-100 text-amber-800 border border-amber-200">
+              Placeholder
+            </span>
+          )}
+        </div>
         <p className="text-gray-600">
           Quote prepared for <span className="font-semibold">{businessData.businessName}</span>
         </p>
@@ -52,11 +50,11 @@ export function QuotationResult({ businessData, quoteResult, onStartOver }: Quot
             <tbody>
               <tr className="border-b border-gray-200">
                 <td className="py-3 px-4 text-sm text-gray-900">Cards in person</td>
-                <td className="py-3 px-4 text-sm text-gray-900">2.3-2.5%</td>
+                <td className="py-3 px-4 text-sm text-gray-900">{quoteResult.in_person_rate_range}</td>
               </tr>
               <tr className="border-b border-gray-200">
                 <td className="py-3 px-4 text-sm text-gray-900">Cards online or by phone</td>
-                <td className="py-3 px-4 text-sm text-gray-900">2.4-2.6%</td>
+                <td className="py-3 px-4 text-sm text-gray-900">{quoteResult.online_rate_range}</td>
               </tr>
             </tbody>
           </table>
@@ -68,10 +66,12 @@ export function QuotationResult({ businessData, quoteResult, onStartOver }: Quot
         <h3 className="text-gray-900 mb-6">Other potential transaction charges</h3>
         
         <div className="grid md:grid-cols-2 gap-4">
-          <div className="border border-gray-300 rounded p-4">
-            <p className="text-sm text-gray-700 mb-1">Chargeback fee</p>
-            <p className="text-2xl font-semibold text-gray-900">$25</p>
-          </div>
+          {quoteResult.other_potential_transaction_charges.map((charge) => (
+            <div key={charge.name} className="border border-gray-300 rounded p-4">
+              <p className="text-sm text-gray-700 mb-1">{charge.name}</p>
+              <p className="text-2xl font-semibold text-gray-900">{formatCurrency(charge.value)}</p>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -82,14 +82,12 @@ export function QuotationResult({ businessData, quoteResult, onStartOver }: Quot
           <h3 className="text-gray-900 mb-6">Other monthly charges</h3>
           
           <div className="space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-gray-200">
-              <p className="text-sm text-gray-700">Point-of-sale terminal (per terminal per month)</p>
-              <p className="text-sm font-semibold text-gray-900">$25</p>
-            </div>
-            <div className="flex justify-between items-center pb-3 border-b border-gray-200">
-              <p className="text-sm text-gray-700">Gateway charge</p>
-              <p className="text-sm font-semibold text-gray-900">$16</p>
-            </div>
+            {quoteResult.other_monthly_charges.map((charge) => (
+              <div key={charge.name} className="flex justify-between items-center pb-3 border-b border-gray-200 last:border-b-0">
+                <p className="text-sm text-gray-700">{charge.name}</p>
+                <p className="text-sm font-semibold text-gray-900">{charge.value < 0 ? `-${formatCurrency(Math.abs(charge.value))}` : formatCurrency(charge.value)}</p>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -101,9 +99,9 @@ export function QuotationResult({ businessData, quoteResult, onStartOver }: Quot
             <div>
               <p className="text-sm text-gray-500 mb-2">Payment brands accepted</p>
               <div className="flex flex-wrap gap-2">
-                <span className="px-3 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded">Visa</span>
-                <span className="px-3 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded">Mastercard</span>
-                <span className="px-3 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded">American Express</span>
+                {acceptedBrands.map((brand) => (
+                  <span key={brand} className="px-3 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded">{brand}</span>
+                ))}
               </div>
             </div>
           </div>
@@ -117,27 +115,27 @@ export function QuotationResult({ businessData, quoteResult, onStartOver }: Quot
         <div className="grid md:grid-cols-2 gap-x-8 gap-y-4">
           <div>
             <p className="text-sm text-gray-500 mb-1">Business Name</p>
-            <p className="text-gray-900 font-medium">{businessData.businessName}</p>
+            <p className="text-gray-900 font-medium">{quoteResult.quote_summary.business_name}</p>
           </div>
 
           <div>
             <p className="text-sm text-gray-500 mb-1">Industry</p>
-            <p className="text-gray-900 font-medium capitalize">{businessData.industry.replace('-', ' ')}</p>
+            <p className="text-gray-900 font-medium">{quoteResult.quote_summary.industry}</p>
           </div>
 
           <div>
-            <p className="text-sm text-gray-500 mb-1">Average Transaction</p>
-            <p className="text-gray-900 font-medium">${parseFloat(businessData.averageTransactionValue).toFixed(2)}</p>
+            <p className="text-sm text-gray-500 mb-1">Average Ticket Size</p>
+            <p className="text-gray-900 font-medium">{formatCurrency(quoteResult.quote_summary.average_ticket_size)}</p>
           </div>
 
           <div>
             <p className="text-sm text-gray-500 mb-1">Monthly Transactions</p>
-            <p className="text-gray-900 font-medium">{businessData.monthlyTransactions}</p>
+            <p className="text-gray-900 font-medium">{quoteResult.quote_summary.monthly_transactions}</p>
           </div>
 
           <div>
             <p className="text-sm text-gray-500 mb-1">Quote Date</p>
-            <p className="text-gray-900 font-medium">{new Date().toLocaleDateString('en-GB')}</p>
+            <p className="text-gray-900 font-medium">{quoteResult.quote_summary.quote_date}</p>
           </div>
         </div>
       </div>

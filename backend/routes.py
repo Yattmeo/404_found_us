@@ -23,6 +23,8 @@ from schemas import (
     MerchantResponse,
 )
 from services import DataProcessingService, MerchantFeeCalculationService, MCCService
+from modules.merchant_quote.schemas import MerchantQuoteRequest, MerchantQuoteResponse
+from modules.merchant_quote.controller import create_merchant_quote
 
 router = APIRouter(prefix="/api/v1")
 
@@ -293,3 +295,15 @@ def get_mcc(mcc_code: str):
     if not mcc:
         raise HTTPException(status_code=404, detail="MCC code not found")
     return {"status": "success", "data": mcc}
+
+
+# ── Merchant Quote ─────────────────────────────────────────────────────────────
+
+@router.post(
+    "/merchant-quote",
+    response_model=MerchantQuoteResponse,
+    tags=["Merchant Quote"],
+    summary="Generate merchant quote details for frontend tool",
+)
+def generate_merchant_quote(payload: MerchantQuoteRequest):
+    return create_merchant_quote(payload)
