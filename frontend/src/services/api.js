@@ -26,6 +26,27 @@ api.interceptors.response.use(
 
 // Merchant Fee Calculator API endpoints
 export const merchantFeeAPI = {
+  // Step 1 — ALWAYS call this before quotation.
+  // Calculates interchange + network costs from a transaction CSV/Excel file.
+  // mcc is passed as a query param (integer, e.g. 5499).
+  // Returns: { totalCost, totalPaymentVolume, effectiveRate, slope, costVariance }
+  // Also triggers ML microservice (background task — transparent to caller).
+  calculateTransactionCosts: async (file, mcc) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await api.post(
+        `/calculations/transaction-costs?mcc=${mcc}`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error calculating transaction costs:', error);
+      throw error;
+    }
+  },
+
   // Calculate fees based on current rates
   calculateCurrentRates: async (transactions, mcc, currentRate, fixedFee = 0.30) => {
     try {

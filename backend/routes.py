@@ -4,13 +4,18 @@ Replaces Flask Blueprints with a single APIRouter mounted at /api/v1.
 """
 from __future__ import annotations
 
+import logging
+import os
 import random
 import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+import httpx
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -25,8 +30,50 @@ from schemas import (
 from services import DataProcessingService, MerchantFeeCalculationService, MCCService
 from modules.merchant_quote.schemas import MerchantQuoteRequest, MerchantQuoteResponse
 from modules.merchant_quote.controller import create_merchant_quote
+from modules.cost_calculation.schemas import CostCalculationResponse
+from modules.cost_calculation.controller import run_cost_calculation
 
 router = APIRouter(prefix="/api/v1")
+
+logger = logging.getLogger(__name__)
+
+# URL of the ML microservice — injected via env var in docker-compose
+_ML_SERVICE_URL = os.environ.get("ML_SERVICE_URL", "http://ml-service:8001")
+
+
+def _forward_to_ml(
+    enriched_csv_bytes: bytes,
+    filename: str,
+    mcc: int,
+    total_cost: float,
+    total_payment_volume: float,
+    effective_rate: float,
+    slope: Optional[float],
+    cost_variance: Optional[float],
+) -> None:
+    """
+    Background task: POST enriched CSV + cost metrics to the ML microservice.
+    Runs after the HTTP response is already sent to the caller, so any
+    ML-service delay or downtime does NOT affect the API response time.
+    """
+    url = f"{_ML_SERVICE_URL}/ml/process"
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                url,
+                files={"enriched_csv": (filename, enriched_csv_bytes, "text/csv")},
+                data={
+                    "mcc":                  str(mcc),
+                    "total_cost":           str(total_cost),
+                    "total_payment_volume": str(total_payment_volume),
+                    "effective_rate":       str(effective_rate),
+                    "slope":                str(slope)  if slope          is not None else "",
+                    "cost_variance":        str(cost_variance) if cost_variance is not None else "",
+                },
+            )
+        logger.info("ML service responded %s for %s", response.status_code, filename)
+    except Exception as exc:  # ML service may not be up yet — never crash the backend
+        logger.warning("Could not reach ML service at %s: %s", url, exc)
 
 
 # ── Revenue Projections ────────────────────────────────────────────────────────
@@ -47,6 +94,7 @@ _CLUSTER_LABELS: dict[int, str] = {
     summary="Calculate ML-driven revenue projection for a merchant",
 )
 def calculate_revenue_projection(
+    # for Matthew/Denzel to edit 
     payload: RevenueProjectionRequest,
     db: Session = Depends(get_db),
 ):
@@ -78,6 +126,8 @@ def calculate_revenue_projection(
 
 # ── Transactions ───────────────────────────────────────────────────────────────
 
+# for Justin to edit 
+# THIS IS FOR SALES
 @router.post("/transactions/upload", tags=["Transactions"])
 async def upload_transactions(
     file: UploadFile = File(...),
@@ -297,8 +347,89 @@ def get_mcc(mcc_code: str):
     return {"status": "success", "data": mcc}
 
 
+# ── Cost Calculation ──────────────────────────────────────────────────────────
+
+@router.post(
+    "/calculations/transaction-costs",
+    tags=["Calculations"],
+    summary="Calculate interchange + network costs from a transaction file",
+    response_class=StreamingResponse,
+)
+async def calculate_transaction_costs(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="CSV or Excel file of transactions"),
+    mcc: int = Query(..., description="Merchant Category Code (e.g. 5499)"),
+):
+    """
+    Accepts a CSV/Excel transaction file and an MCC query param.
+
+    Response body:    enriched CSV file (original columns + card_cost,
+                      network_cost, total_cost, match_found, etc.)
+
+    Response headers: 6 cost metric headers
+        X-Total-Cost, X-Total-Payment-Volume, X-Effective-Rate,
+        X-Slope, X-Cost-Variance, X-Weekly-Cost-Variance
+
+    After returning the response the enriched CSV and metrics are forwarded
+    to the ML microservice as a background task.
+
+    This endpoint must be called BEFORE quotation calculations.
+    """
+    allowed = {"csv", "xlsx", "xls"}
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type not allowed. Allowed: {', '.join(allowed)}",
+        )
+    try:
+        contents = await file.read()
+        result, enriched_csv_bytes = run_cost_calculation(contents, file.filename, mcc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Cost calculation failed: {exc}")
+
+    # Fire-and-forget: forward enriched CSV + metrics to ML microservice.
+    # BackgroundTasks ensures the caller gets the response immediately even
+    # if the ML service is slow or temporarily unavailable.
+    background_tasks.add_task(
+        _forward_to_ml,
+        enriched_csv_bytes=enriched_csv_bytes,
+        filename=file.filename,
+        mcc=mcc,
+        total_cost=result.totalCost,
+        total_payment_volume=result.totalPaymentVolume,
+        effective_rate=result.effectiveRate,
+        slope=result.slope,
+        cost_variance=result.costVariance,
+    )
+
+    base_name = file.filename.rsplit(".", 1)[0] if "." in file.filename else file.filename
+    output_filename = f"{base_name}_enriched.csv"
+
+    return StreamingResponse(
+        io.BytesIO(enriched_csv_bytes),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition":           f'attachment; filename="{output_filename}"',
+            "X-Total-Cost":                  str(result.totalCost),
+            "X-Total-Payment-Volume":        str(result.totalPaymentVolume),
+            "X-Effective-Rate":              str(result.effectiveRate),
+            "X-Slope":                       str(result.slope)              if result.slope              is not None else "null",
+            "X-Cost-Variance":               str(result.costVariance)       if result.costVariance       is not None else "null",
+            "X-Weekly-Cost-Variance":        str(result.weeklyCostVariance) if result.weeklyCostVariance is not None else "null",
+            "Access-Control-Expose-Headers": (
+                "X-Total-Cost, X-Total-Payment-Volume, X-Effective-Rate, "
+                "X-Slope, X-Cost-Variance, X-Weekly-Cost-Variance"
+            ),
+        },
+    )
+
+
 # ── Merchant Quote ─────────────────────────────────────────────────────────────
 
+# Merchant Quote endpoint for sales tool - Justin to edit logic in service.py
 @router.post(
     "/merchant-quote",
     response_model=MerchantQuoteResponse,

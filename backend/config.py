@@ -23,6 +23,11 @@ class Config:
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE = 100
 
+    # ML Microservice
+    # The backend forwards enriched CSV + cost metrics here after every
+    # /calculations/transaction-costs call.
+    ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'http://ml-service:8001')
+
 class DevelopmentConfig(Config):
     """Development configuration"""
     DEBUG = True

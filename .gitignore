@@ -44,6 +44,7 @@ wandb/
 *.model
 catboost_info/
 *.csv
+*.xlsx
 
 # Node
 node_modules/

@@ -10,6 +10,7 @@ class MerchantQuoteService:
     def _format_rate_range(lower: float, upper: float) -> str:
         return f"{lower:.1f}-{upper:.1f}%"
 
+    # placeholders logic here, Justin or whoever to edit and integrate later on
     @staticmethod
     def generate_quote(payload: MerchantQuoteRequest) -> MerchantQuoteResponse:
         monthly_volume = payload.average_transaction_value * payload.monthly_transactions
