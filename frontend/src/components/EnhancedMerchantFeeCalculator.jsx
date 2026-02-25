@@ -246,10 +246,10 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                     )}
                   </div>
 
-                  {/* Fixed Fee - Conditional */}
-                  {(feeStructure === 'percentage-fixed' || feeStructure === 'fixed') && (
+                  {/* Fixed Fee - Conditional: Only for % + Fixed Fee */}
+                  {feeStructure === 'percentage-fixed' && (
                     <div>
-                      <Label htmlFor="fixedFee">Fixed Fee {feeStructure === 'percentage-fixed' ? <span className="text-gray-500 font-normal">(Optional)</span> : ''}</Label>
+                      <Label htmlFor="fixedFee">Fixed Fee <span className="text-gray-500 font-normal">(Optional)</span></Label>
                       <div className="relative">
                         <Input
                           id="fixedFee"
@@ -257,14 +257,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
                           step="0.01"
                           min="0"
                           {...register('fixedFee', {
-                            required: feeStructure === 'fixed' ? 'Fixed fee is required for fixed fee structure' : false,
-                            min: { value: 0, message: 'Fixed fee cannot be negative' },
-                            validate: (value) => {
-                              if (feeStructure === 'fixed' && (!value || parseFloat(value) <= 0)) {
-                                return 'Fixed fee must be greater than 0';
-                              }
-                              return true;
-                            }
+                            min: { value: 0, message: 'Fixed fee cannot be negative' }
                           })}
                           placeholder="Enter fixed fee"
                           className={fixedFee ? 'pl-8' : ''}
