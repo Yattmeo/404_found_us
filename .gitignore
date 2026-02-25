@@ -70,3 +70,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Presentation assets (local only)
+presentation/

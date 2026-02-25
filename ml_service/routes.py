@@ -4,13 +4,13 @@ ML Microservice routes.
 ── API ENDPOINTS ─────────────────────────────────────────────────────────────
 POST /ml/process
     Primary entry point. Called automatically by the backend after every
-    /calculations/transaction-costs request. Runs all 4 engines in sequence.
+    /calculations/transaction-costs request. Runs Rate Optimisation, TPV
+    Prediction, and KNN Rate Quote engines in sequence.
     ── WHERE TO EDIT: this file, process() function below.
 
 POST /ml/rate-optimisation
 POST /ml/tpv-prediction
-POST /ml/cluster-generation
-POST /ml/cluster-assignment
+POST /ml/knn-rate-quote
     Individual engine endpoints. Useful for testing engines in isolation.
     ── WHERE TO EDIT: each engine's controller.py (see modules/).
 """
@@ -25,8 +25,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from database import get_db
-from modules.cluster_assignment.controller import run_cluster_assignment
-from modules.cluster_generation.controller import run_cluster_generation
+from modules.knn_rate_quote.controller import run_knn_rate_quote
 from modules.rate_optimisation.controller import run_rate_optimisation
 from modules.tpv_prediction.controller import run_tpv_prediction
 
@@ -53,14 +52,17 @@ async def process(
     effective_rate:         float            = Form(...),
     slope:                  Optional[str]    = Form(None),
     cost_variance:          Optional[str]    = Form(None),
+    card_type:              Optional[str]    = Form(None),
+    monthly_txn_count:      Optional[int]    = Form(None),
+    avg_amount:             Optional[float]  = Form(None),
+    as_of_date:             Optional[str]    = Form(None),
     db:                     Session          = Depends(get_db),
 ):
     """
-    Orchestrates all 4 ML engines in sequence:
+    Orchestrates ML engines in sequence:
       1. Rate Optimisation Engine
       2. TPV Prediction Engine
-      3. Cluster Generation Engine
-      4. Cluster Assignment Engine
+      3. KNN Rate Quote Engine
 
     Inputs (all outputs from /calculations/transaction-costs):
       • enriched_csv          — CSV file with original columns + cost columns
@@ -70,14 +72,19 @@ async def process(
       • effective_rate        — totalCost / totalPaymentVolume × 100
       • slope                 — linear regression slope of weekly costs
       • cost_variance         — weekly cost variance
+      • card_type             — "visa" | "mastercard" | "both" (KNN)
+      • monthly_txn_count     — override monthly transaction count (KNN)
+      • avg_amount            — override average transaction amount (KNN)
+      • as_of_date            — ISO date string for KNN context end (KNN)
 
     ── WHERE TO EDIT ─────────────────────────────────────────────────────────
     Individual engine logic lives in ml_service/modules/<engine>/service.py.
     This function wires them together — change the call order here if needed.
     """
-    # Parse slope / cost_variance (sent as strings from Form, may be empty)
+    # Parse optional form strings
     _slope         = float(slope)         if slope         else None
     _cost_variance = float(cost_variance) if cost_variance else None
+    _as_of_date    = pd.Timestamp(as_of_date).date() if as_of_date else None
 
     try:
         df = _parse_csv(enriched_csv)
@@ -95,25 +102,28 @@ async def process(
 
     logger.info("ML /process received — MCC %s, %d rows", mcc, len(df))
 
-    # 1. Rate Optimisation ───────────────────────────────────────────────────
+    # 1. Rate Optimisation
     rate_result = run_rate_optimisation(df=df, metrics=metrics, db=db)
 
-    # 2. TPV Prediction ──────────────────────────────────────────────────────
+    # 2. TPV Prediction
     tpv_result = run_tpv_prediction(df=df, metrics=metrics, db=db)
 
-    # 3. Cluster Generation ──────────────────────────────────────────────────
-    cluster_gen_result = run_cluster_generation(df=df, metrics=metrics, db=db)
-
-    # 4. Cluster Assignment ──────────────────────────────────────────────────
-    cluster_assign_result = run_cluster_assignment(df=df, metrics=metrics, db=db)
+    # 3. KNN Rate Quote
+    knn_result = run_knn_rate_quote(
+        df=df,
+        mcc=mcc,
+        card_type=card_type,
+        monthly_txn_count=monthly_txn_count,
+        avg_amount=avg_amount,
+        as_of_date=_as_of_date,
+    )
 
     return {
         "status":           "success",
         "mcc":              mcc,
         "rate_optimisation":  rate_result,
         "tpv_prediction":     tpv_result,
-        "cluster_generation": cluster_gen_result,
-        "cluster_assignment": cluster_assign_result,
+        "knn_rate_quote":     knn_result,
     }
 
 
@@ -169,51 +179,32 @@ async def tpv_prediction_endpoint(
     return run_tpv_prediction(df=df, metrics=metrics, db=db)
 
 
-@router.post("/cluster-generation", tags=["Cluster Generation Engine"])
-async def cluster_generation_endpoint(
-    enriched_csv:           UploadFile    = File(...),
-    mcc:                    int           = Form(...),
-    total_cost:             float         = Form(...),
-    total_payment_volume:   float         = Form(...),
-    effective_rate:         float         = Form(...),
-    slope:                  Optional[str] = Form(None),
-    cost_variance:          Optional[str] = Form(None),
-    db:                     Session       = Depends(get_db),
+@router.post("/knn-rate-quote", tags=["KNN Rate Quote Engine"])
+async def knn_rate_quote_endpoint(
+    mcc:                int              = Form(...),
+    card_type:          Optional[str]    = Form(None),
+    monthly_txn_count:  Optional[int]    = Form(None),
+    avg_amount:         Optional[float]  = Form(None),
+    as_of_date:         Optional[str]    = Form(None),
+    enriched_csv:       Optional[UploadFile] = File(None),
 ):
     """
-    Cluster Generation Engine — standalone endpoint.
-    ── WHERE TO EDIT: ml_service/modules/cluster_generation/service.py
-    """
-    df = _parse_csv(enriched_csv)
-    metrics = dict(
-        mcc=mcc, total_cost=total_cost, total_payment_volume=total_payment_volume,
-        effective_rate=effective_rate,
-        slope=float(slope) if slope else None,
-        cost_variance=float(cost_variance) if cost_variance else None,
-    )
-    return run_cluster_generation(df=df, metrics=metrics, db=db)
+    KNN Rate Quote Engine — standalone endpoint.
 
+    Supply either `enriched_csv` (transaction-level CSV with columns
+    transaction_date, amount, cost_type_ID) OR the metrics-only mode by
+    providing `monthly_txn_count`, `avg_amount`, and `as_of_date` without a
+    CSV file.  Both modes may be combined.
 
-@router.post("/cluster-assignment", tags=["Cluster Assignment Engine"])
-async def cluster_assignment_endpoint(
-    enriched_csv:           UploadFile    = File(...),
-    mcc:                    int           = Form(...),
-    total_cost:             float         = Form(...),
-    total_payment_volume:   float         = Form(...),
-    effective_rate:         float         = Form(...),
-    slope:                  Optional[str] = Form(None),
-    cost_variance:          Optional[str] = Form(None),
-    db:                     Session       = Depends(get_db),
-):
+    ── WHERE TO EDIT: ml_service/modules/knn_rate_quote/service.py
     """
-    Cluster Assignment Engine — standalone endpoint.
-    ── WHERE TO EDIT: ml_service/modules/cluster_assignment/service.py
-    """
-    df = _parse_csv(enriched_csv)
-    metrics = dict(
-        mcc=mcc, total_cost=total_cost, total_payment_volume=total_payment_volume,
-        effective_rate=effective_rate,
-        slope=float(slope) if slope else None,
-        cost_variance=float(cost_variance) if cost_variance else None,
+    df = _parse_csv(enriched_csv) if enriched_csv is not None else None
+    _as_of_date = pd.Timestamp(as_of_date).date() if as_of_date else None
+    return run_knn_rate_quote(
+        df=df,
+        mcc=mcc,
+        card_type=card_type,
+        monthly_txn_count=monthly_txn_count,
+        avg_amount=avg_amount,
+        as_of_date=_as_of_date,
     )
-    return run_cluster_assignment(df=df, metrics=metrics, db=db)

@@ -1,68 +1,39 @@
 """
 SQLAlchemy ORM models for the ML microservice.
 
-── HOW VECTORS ARE STORED IN POSTGRESQL ─────────────────────────────────────
-pgvector adds a native `vector` column type to Postgres.
-Each row in `merchant_cluster_vectors` holds one merchant's feature vector
-alongside the cluster it was assigned to.
+── KNN RATE QUOTE TABLES ─────────────────────────────────────────────────────
+knn_transactions   — historical transaction rows migrated from SQLite
+knn_cost_type_ref  — lookup table of known cost_type_id values
 
-`cluster_centroids` stores the centroid vector for each cluster — this is
-what the Cluster Assignment Engine compares against to assign new merchants.
+These tables are populated once by running:
+    docker compose exec ml-service python migrate_sqlite_to_postgres.py
 
 ── WHERE TO EDIT ─────────────────────────────────────────────────────────────
-• Change VECTOR_DIM in config.py when you finalise feature dimensions.
 • Add extra columns here if your engines require additional metadata.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from sqlalchemy import Column, Float, Integer, String
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, Float, Integer, String
-
-from config import MLConfig
 from database import Base
 
 
-class MerchantClusterVector(Base):
-    """One row per merchant per calculation run."""
-    __tablename__ = "merchant_cluster_vectors"
+class KNNTransaction(Base):
+    """One row per historical transaction used by the KNN Rate Quote Engine."""
+    __tablename__ = "knn_transactions"
 
-    id            = Column(Integer, primary_key=True, index=True)
-    merchant_id   = Column(String, index=True, nullable=True)
-    mcc           = Column(Integer, nullable=False)
-    cluster_id    = Column(Integer, nullable=True)   # filled by ClusterAssignmentEngine
-    cluster_label = Column(String, nullable=True)
-
-    # ── Cost metrics (from CostCalculationService) ───────────────────────────
-    total_cost            = Column(Float, nullable=False)
-    total_payment_volume  = Column(Float, nullable=False)
-    effective_rate        = Column(Float, nullable=False)
-    slope                 = Column(Float, nullable=True)
-    cost_variance         = Column(Float, nullable=True)
-
-    # ── pgvector embedding ───────────────────────────────────────────────────
-    # Edit VECTOR_DIM in config.py and _build_feature_vector() in
-    # ml_service/modules/cluster_generation/service.py to change dimensions.
-    embedding = Column(Vector(MLConfig.VECTOR_DIM), nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id          = Column(Integer, primary_key=True, index=True)
+    merchant_id = Column(String, nullable=True, index=True)
+    date        = Column(String, nullable=False)
+    amount      = Column(Float, nullable=True)
+    proc_cost   = Column(Float, nullable=True)
+    cost_type_id = Column(Integer, nullable=True)
+    card_type   = Column(String, nullable=True)
 
 
-class ClusterCentroid(Base):
-    """
-    One row per cluster.  Updated by the Cluster Generation Engine each time
-    clustering is re-run.  Used by the Cluster Assignment Engine for
-    nearest-neighbour lookup via pgvector's <-> operator.
+class KNNCostTypeRef(Base):
+    """Lookup table of valid cost_type_id values for the KNN engine."""
+    __tablename__ = "knn_cost_type_ref"
 
-    ── WHERE TO EDIT ──────────────────────────────────────────────────────────
-    ml_service/modules/cluster_generation/service.py  →  _store_centroids()
-    ml_service/modules/cluster_assignment/service.py  →  _nearest_centroid()
-    """
-    __tablename__ = "cluster_centroids"
-
-    id            = Column(Integer, primary_key=True, index=True)
-    cluster_id    = Column(Integer, unique=True, nullable=False)
-    cluster_label = Column(String, nullable=True)
-    centroid      = Column(Vector(MLConfig.VECTOR_DIM), nullable=False)
-    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id           = Column(Integer, primary_key=True, index=True)
+    cost_type_id = Column(Integer, nullable=False)

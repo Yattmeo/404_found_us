@@ -7,8 +7,7 @@ Engines exposed under /ml/:
 Individual engine endpoints (for direct testing / future use):
   POST /ml/rate-optimisation
   POST /ml/tpv-prediction
-  POST /ml/cluster-generation
-  POST /ml/cluster-assignment
+  POST /ml/knn-rate-quote
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ from routes import router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables (including pgvector ones) on startup
+    # Create tables on startup
     init_db()
     yield
 
@@ -33,9 +32,13 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "Handles Rate Optimisation, TPV Prediction, "
-        "Cluster Generation, and Cluster Assignment for the 404_Found_Us platform."
+        "and KNN Rate Quote for the 404_Found_Us platform."
     ),
     lifespan=lifespan,
+    # Serve docs under /ml/ so they work through the nginx proxy
+    docs_url="/ml/docs",
+    redoc_url="/ml/redoc",
+    openapi_url="/ml/openapi.json",
 )
 
 app.add_middleware(

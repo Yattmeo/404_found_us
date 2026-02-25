@@ -72,9 +72,9 @@ services:
     container_name: ml-service
     environment:
       - DATABASE_URL=postgresql://pguser:pgpassword@postgres:5432/mldb
-      - VECTOR_DIM=8
     volumes:
       - ./ml_service:/app
+      - "./KNN Demo Service/KNN Demo Service:/data/knn_source:ro"
     depends_on:
       - postgres
     restart: unless-stopped
