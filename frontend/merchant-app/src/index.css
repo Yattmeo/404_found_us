@@ -1567,3 +1567,97 @@ html {
   border-color: #60a5fa;
   box-shadow: inset 0 0 0 1px #60a5fa;
 }
+
+.merchant-progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 9999px;
+  background-color: #e5e7eb;
+  overflow: hidden;
+}
+
+.merchant-progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background-color: #22c55e;
+  transition: width 0.3s ease;
+}
+
+.bg-green-50 { background-color: #f0fdf4; }
+.bg-green-100 { background-color: #dcfce7; }
+.bg-green-500 { background-color: #22c55e; }
+.bg-green-600 { background-color: #16a34a; }
+
+.text-green-500 { color: #22c55e; }
+.text-green-600 { color: #16a34a; }
+.text-green-800 { color: #166534; }
+
+.border-green-100 { border-color: #dcfce7; }
+.border-green-200 { border-color: #bbf7d0; }
+.border-green-300 { border-color: #86efac; }
+
+.hover\:bg-green-50:hover { background-color: #f0fdf4; }
+.hover\:bg-green-600:hover { background-color: #16a34a; }
+.hover\:border-green-300:hover { border-color: #86efac; }
+
+.focus\:ring-green-500:focus,
+.focus\:ring-green-500:focus-visible {
+  box-shadow: inset 0 0 0 1px #22c55e;
+}
+
+.merchant-form-shell {
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: clamp(1rem, 2vw, 2rem);
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.merchant-form-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 2rem;
+  padding-top: 2rem;
+  gap: 1rem;
+}
+
+.merchant-nav-btn {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+}
+
+.merchant-page-shell {
+  padding-top: 2rem;
+  padding-bottom: 2.75rem;
+}
+
+.merchant-page-header {
+  margin-bottom: 2.25rem;
+}
+
+@media (max-width: 768px) {
+  .merchant-form-nav {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .merchant-nav-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .merchant-page-shell {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+  }
+
+  .merchant-page-header {
+    margin-bottom: 1.75rem;
+  }
+}

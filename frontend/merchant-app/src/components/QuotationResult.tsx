@@ -1,4 +1,4 @@
-import { Download, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { BusinessData, QuoteResult } from '../App';
 
 interface QuotationResultProps {
@@ -9,10 +9,6 @@ interface QuotationResultProps {
 }
 
 export function QuotationResult({ businessData, quoteResult, onStartOver, isPlaceholderQuote = false }: QuotationResultProps) {
-  const handlePrint = () => {
-    window.print();
-  };
-
   const formatCurrency = (value: number) => {
     return `$${value.toFixed(2)}`;
   };
@@ -24,7 +20,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
       {/* Header */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-gray-900">Your Payment Processing Quote</h2>
+          <h2 className="text-xl font-medium text-gray-900">Your Payment Processing Quote</h2>
           {isPlaceholderQuote && (
             <span className="px-2 py-1 text-xs font-semibold rounded bg-amber-100 text-amber-800 border border-amber-200">
               Placeholder
@@ -38,7 +34,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
 
       {/* Main pricing table */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
-        <h3 className="text-gray-900 mb-1">Your rates</h3>
+        <h3 className="text-lg font-medium text-gray-900 mb-1">Your rates</h3>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
@@ -63,7 +59,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
 
       {/* Other potential transaction charges */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
-        <h3 className="text-gray-900 mb-6">Other potential transaction charges</h3>
+        <h3 className="text-lg font-medium text-gray-900 mb-6">Other potential transaction charges</h3>
         
         <div className="grid md:grid-cols-2 gap-4">
           {quoteResult.other_potential_transaction_charges.map((charge) => (
@@ -79,7 +75,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
       <div className="grid md:grid-cols-2 gap-6">
         {/* Other monthly charges */}
         <div className="bg-white rounded-lg shadow p-6 md:p-8">
-          <h3 className="text-gray-900 mb-6">Other monthly charges</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-6">Other monthly charges</h3>
           
           <div className="space-y-4">
             {quoteResult.other_monthly_charges.map((charge) => (
@@ -93,7 +89,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
 
         {/* Other details */}
         <div className="bg-white rounded-lg shadow p-6 md:p-8">
-          <h3 className="text-gray-900 mb-6">Other details</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-6">Other details</h3>
           
           <div className="space-y-4">
             <div>
@@ -110,7 +106,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
 
       {/* Business summary */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
-        <h3 className="text-gray-900 mb-6">Quote Summary</h3>
+        <h3 className="text-lg font-medium text-gray-900 mb-6">Quote Summary</h3>
         
         <div className="grid md:grid-cols-2 gap-x-8 gap-y-4">
           <div>
@@ -142,21 +138,14 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
 
       {/* Call to action */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
-        <h3 className="text-gray-900 mb-4">Next Steps</h3>
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Next Steps</h3>
         <p className="text-gray-600 mb-6">
           Ready to get started? Our team can help you set up your payment processing solution and answer any questions you may have about this quote.
         </p>
         
         <div className="flex flex-col sm:flex-row gap-4">
-          <button className="flex-1 px-6 py-3 bg-[#6CAFF3] text-white rounded-lg hover:bg-[#5B9FED] transition font-medium">
+          <button className="flex-1 px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition font-medium">
             Contact Sales Team
-          </button>
-          <button
-            onClick={handlePrint}
-            className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-medium flex items-center justify-center"
-          >
-            <Download className="w-5 h-5 mr-2" />
-            Download Quote
           </button>
           <button
             onClick={onStartOver}

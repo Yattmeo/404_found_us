@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import LandingPage from './components/LandingPage';
 import EnhancedMerchantFeeCalculator from './components/EnhancedMerchantFeeCalculator';
 import DesiredMarginCalculator from './components/DesiredMarginCalculator';
@@ -34,4 +34,3 @@ function App() {
 }
 
 export default App;
-

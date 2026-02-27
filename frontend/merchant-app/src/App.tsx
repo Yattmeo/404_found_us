@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { QuotationForm } from './components/QuotationForm';
 import { QuotationResult } from './components/QuotationResult';
-import logoImage from './assets/logo.svg';
-import illustrationImage from './assets/illustration.svg';
 import axios from 'axios';
 
 export interface BusinessData {
@@ -133,79 +131,37 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-orange-50 flex items-center justify-center p-8">
-      {step === 'form' ? (
-        <div className="flex relative bg-white shadow-2xl" style={{ width: '1122px', height: '793px' }}>
-          {/* Left Panel - Illustration and Branding */}
-          <div className="w-[52%] bg-gradient-to-br from-[#4A8FE7] via-[#5B9FED] to-[#6CAFF3] relative overflow-hidden rounded-l-lg">
-            <div className="w-full h-full p-8 flex flex-col relative z-10">
-              {/* Brand Logo */}
-              <div className="mb-6">
-                <img 
-                  src={logoImage} 
-                  alt="404 Found Us" 
-                  className="h-12 object-contain"
-                  style={{ 
-                    filter: 'brightness(0) invert(1) drop-shadow(0 2px 4px rgba(0,0,0,0.1))'
-                  }}
+    <div className="min-h-screen bg-[#E5EBE9]">
+      <div className="container mx-auto px-4 merchant-page-shell">
+        <div className="max-w-4xl mx-auto">
+          <header className="text-center merchant-page-header">
+            <h2 className="text-xl font-medium text-gray-800 mb-3">Online Quotation Tool</h2>
+            <p className="text-base text-gray-600 max-w-2xl mx-auto leading-relaxed">
+              Simply answer a few questions about your business and transaction volume and get a customised quote for your payment processing needs.
+            </p>
+          </header>
+
+          {step === 'form' ? (
+            <>
+              <QuotationForm onSubmit={handleSubmit} />
+              {isLoadingQuote && <p className="mt-3 text-sm text-gray-500">Generating quote from backend...</p>}
+              {quoteError && <p className="mt-3 text-sm text-red-600">{quoteError}</p>}
+            </>
+          ) : (
+            <>
+              {quoteError && <p className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">{quoteError}</p>}
+              {businessData && quoteResult && (
+                <QuotationResult
+                  businessData={businessData}
+                  quoteResult={quoteResult}
+                  onStartOver={handleStartOver}
+                  isPlaceholderQuote={isPlaceholderQuote}
                 />
-              </div>
-
-              {/* Main Content */}
-              <div className="flex-1 flex flex-col h-full">
-                {/* Text Content - Positioned at top */}
-                <div className="pt-1 pb-2 flex-shrink-0">
-                  <h1 className="text-white text-2xl font-bold mb-2 leading-tight drop-shadow-lg">
-                    Merchant Quotation Tool
-                  </h1>
-                  <p className="text-white text-sm italic leading-relaxed max-w-sm drop-shadow-md">
-                    Simply answer a few questions about your business and transaction volume and get a customised quote for your payment processing needs.
-                  </p>
-                </div>
-
-                {/* Illustration - Takes up remaining space, showing full image */}
-                <div className="flex-1 flex items-start justify-center overflow-hidden pb-2">
-                  <img 
-                    src={illustrationImage}
-                    alt="Person with laptop illustration"
-                    className="w-full h-full object-contain object-top"
-                    style={{ maxHeight: '105%' }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Decorative Shapes */}
-            <div className="absolute top-10 right-10 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
-            <div className="absolute bottom-10 left-10 w-48 h-48 bg-white/10 rounded-full blur-2xl"></div>
-          </div>
-
-          {/* Right Panel - Form with Curved Edge */}
-          <div className="w-[52%] absolute right-0 top-0 bottom-0 flex items-center justify-center p-0 z-20">
-            <div className="w-full h-full bg-white rounded-l-[3rem] shadow-2xl flex items-center justify-center px-12 py-10 overflow-hidden">
-              <div className="w-full max-w-xl h-full overflow-y-auto" style={{ maxHeight: 'calc(100% - 2rem)' }}>
-                <QuotationForm onSubmit={handleSubmit} />
-                {isLoadingQuote && <p className="mt-3 text-sm text-gray-500">Generating quote from backend...</p>}
-                {quoteError && <p className="mt-3 text-sm text-red-600">{quoteError}</p>}
-              </div>
-            </div>
-          </div>
+              )}
+            </>
+          )}
         </div>
-      ) : (
-        <div className="container mx-auto px-4 py-8 md:py-12">
-          <div className="max-w-4xl mx-auto">
-            {quoteError && <p className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">{quoteError}</p>}
-            {businessData && quoteResult && (
-              <QuotationResult
-                businessData={businessData}
-                quoteResult={quoteResult}
-                onStartOver={handleStartOver}
-                isPlaceholderQuote={isPlaceholderQuote}
-              />
-            )}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
