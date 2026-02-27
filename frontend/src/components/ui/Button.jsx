@@ -5,10 +5,10 @@ const Button = React.forwardRef(({ className, variant = "default", size = "defau
   const Comp = asChild ? "span" : "button";
   
   const variants = {
-    default: "bg-[#44D62C] hover:bg-[#3BC424] text-[#FFFFFF] font-semibold",
-    outline: "border-2 border-[#44D62C] bg-[#FFFFFF] hover:bg-green-50 text-[#44D62C] font-semibold",
+    default: "bg-[#22C55E] hover:bg-[#16A34A] text-[#FFFFFF] font-semibold",
+    outline: "border-2 border-[#22C55E] bg-[#FFFFFF] hover:bg-green-50 text-[#22C55E] font-semibold",
     ghost: "hover:bg-green-50 text-[#313131]",
-    link: "text-[#44D62C] underline-offset-4 hover:underline font-medium",
+    link: "text-[#22C55E] underline-offset-4 hover:underline font-medium",
   };
   
   const sizes = {

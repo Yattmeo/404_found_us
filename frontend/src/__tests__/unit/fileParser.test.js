@@ -201,7 +201,7 @@ describe('fileParser.js', () => {
     it('should reject invalid card_brand, transaction_type, card_type, transaction_id, merchant_id', () => {
       const data = [
         VALID_HEADERS,
-        'abcdefg,25/12/2025,Amex,12345,99.99,InvalidType,InvalidCard',
+        'abcdefg,25/12/2025,Discover,12345,99.99,InvalidType,InvalidCard',
       ];
       const result = validateFileStructure(data, REQUIRED_COLUMNS);
       expect(result.valid).toBe(false);

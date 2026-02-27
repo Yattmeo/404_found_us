@@ -41,13 +41,44 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
       mcc: '',
       feeStructure: '',
       fixedFee: '',
-      minimumFee: '',
       desiredMargin: ''
     }
   });
 
   const feeStructure = watch('feeStructure');
   const mcc = watch('mcc');
+
+  const normalizeDesiredMarginResults = (apiPayload, summaryData) => {
+    const data = apiPayload?.data || apiPayload || {};
+
+    const recommendedRate = typeof data.recommended_rate === 'number'
+      ? data.recommended_rate
+      : null;
+    const desiredMargin = typeof data.desired_margin === 'number'
+      ? data.desired_margin
+      : null;
+
+    const suggestedRatePercent = recommendedRate !== null
+      ? parseFloat((recommendedRate * 100).toFixed(2))
+      : null;
+
+    return {
+      suggestedRate: suggestedRatePercent,
+      marginBps: desiredMargin !== null ? Math.round(desiredMargin * 10000) : null,
+      estimatedProfit: typeof data.estimated_total_fees === 'number' ? data.estimated_total_fees : null,
+      quotableRange: suggestedRatePercent !== null
+        ? {
+            min: parseFloat(Math.max(0, suggestedRatePercent - 0.1).toFixed(2)),
+            max: parseFloat((suggestedRatePercent + 0.1).toFixed(2)),
+          }
+        : { min: null, max: null },
+      expectedATS: typeof data.average_ticket === 'number' ? data.average_ticket : summaryData?.averageTicket ?? null,
+      atsMarginError: null,
+      expectedVolume: typeof data.total_volume === 'number' ? data.total_volume : summaryData?.totalAmount ?? null,
+      volumeMarginError: null,
+      parsedData: summaryData,
+    };
+  };
 
   const handleDownloadTemplate = () => {
     const headers = 'transaction_date,merchant_id,mcc,amount';
@@ -135,6 +166,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
         totalTransactions,
         totalAmount,
         averageTicket,
+        transactions: data,
         source: 'manual'
       });
       
@@ -149,20 +181,17 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
   const onSubmit = async (data) => {
     setIsLoading(true);
     try {
-      // Prepare API payload
       const payload = {
+        transactions: parsedData?.transactions || [],
         mcc: data.mcc,
-        feeStructure: data.feeStructure,
-        fixedFee: data.fixedFee ? parseFloat(data.fixedFee) : null,
-        minimumFee: data.minimumFee ? parseFloat(data.minimumFee) : null,
-        desiredMargin: data.desiredMargin ? parseFloat(data.desiredMargin) : null,
-        merchantData: parsedData,
+        desired_margin: data.desiredMargin ? parseFloat(data.desiredMargin) / 10000 : 0.015,
+        fixed_fee: data.fixedFee ? parseFloat(data.fixedFee) : 0.30,
       };
 
       // Call API
       const apiResults = await desiredMarginAPI.calculateDesiredMargin(payload);
-      
-      setResults(apiResults);
+
+      setResults(normalizeDesiredMarginResults(apiResults, parsedData));
       setShowResults(true);
     } catch (error) {
       console.error('Calculation error:', error);
@@ -176,9 +205,9 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
           min: null,
           max: null,
         },
-        expectedATS: null,
+        expectedATS: parsedData?.averageTicket ?? null,
         atsMarginError: null,
-        expectedVolume: null,
+        expectedVolume: parsedData?.totalAmount ?? null,
         volumeMarginError: null,
         parsedData,
       };
@@ -245,7 +274,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
         const totalAmount = dataRows.reduce((sum, row) => sum + row.amount, 0);
         const averageTicket = totalAmount / totalTransactions;
         
-        setValue('mcc', mcc);
+        setValue('mcc', mcc, { shouldValidate: true, shouldDirty: true });
         setFileError('');
         
         setParsedData({
@@ -254,6 +283,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
           totalTransactions,
           totalAmount,
           averageTicket,
+          transactions: dataRows,
           source: 'file'
         });
       } catch (error) {
@@ -323,7 +353,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
         const totalAmount = dataRows.reduce((sum, row) => sum + row.amount, 0);
         const averageTicket = totalAmount / totalTransactions;
         
-        setValue('mcc', mcc);
+        setValue('mcc', mcc, { shouldValidate: true, shouldDirty: true });
         setFileError('');
         
         setParsedData({
@@ -332,6 +362,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
           totalTransactions,
           totalAmount,
           averageTicket,
+          transactions: dataRows,
           source: 'file'
         });
       } catch (error) {
@@ -369,43 +400,37 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 flex items-center justify-center p-8">
+    <div className="min-h-screen bg-[#E8F5F0] flex items-center justify-center p-8">
       <div className="w-full max-w-6xl">
         {/* Back Button */}
         <button
           onClick={onBackToLanding}
-          className="flex items-center gap-2 text-gray-600 hover:text-[#44D62C] transition-colors mb-6 font-medium"
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-800 transition-colors mb-6"
         >
           <ArrowLeft className="w-5 h-5" />
-          <span>Back to Home</span>
+          <span className="font-medium">Back to Home</span>
         </button>
 
         {/* Split Layout Container */}
         <div className="bg-white rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-5">
           {/* Left Panel */}
-          <div className="lg:col-span-2 bg-gradient-to-br from-[#44D62C] to-[#2FA51F] p-12 flex flex-col justify-between relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-full h-full">
-              <svg className="absolute -right-1 top-0 h-full w-20" viewBox="0 0 100 800" preserveAspectRatio="none">
-                <path d="M0,0 Q50,400 0,800 L100,800 L100,0 Z" fill="white" opacity="0.05"/>
-              </svg>
-            </div>
-            
+          <div className="lg:col-span-2 bg-gradient-to-br from-[#22C55E] to-[#16A34A] p-12 flex flex-col justify-between relative overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
             <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2"></div>
             
             <div className="relative z-10">
-              <h1 className="text-4xl font-bold text-[#FFFFFF] mb-4">
-                Desired Margin Calculator
+              <h1 className="text-4xl font-bold text-white mb-4">
+                Rates Quotation Tool
               </h1>
-              <p className="text-[#FFFFFF] opacity-90 text-lg leading-relaxed">
-                Calculate the optimal rates to quote your merchants. Upload transaction data or enter it manually to get personalized rate recommendations.
+              <p className="text-green-50 text-lg leading-relaxed">
+                Receive data-driven pricing recommendations to maximise your revenue while staying competitive.
               </p>
             </div>
 
             <div className="relative z-10 mt-8">
               <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/20">
                 <div className="flex items-center justify-center h-48">
-                  <TrendingUp className="w-24 h-24 text-white/60" />
+                    <TrendingUp className="w-24 h-24 text-white/70" />
                 </div>
               </div>
             </div>
@@ -431,8 +456,8 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                     <div 
                       className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
                         fileError ? 'border-red-300 bg-red-50' : 
-                        dragActive ? 'border-[#44D62C] bg-green-50' : 
-                        'border-gray-300 bg-gray-50 hover:border-[#44D62C]'
+                        dragActive ? 'border-[#22C55E] bg-green-50' : 
+                        'border-gray-300 bg-gray-50 hover:border-[#22C55E]'
                       }`}
                       onDragEnter={handleDrag}
                       onDragLeave={handleDrag}
@@ -455,7 +480,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                             <p className="text-sm text-red-600 mt-1">{fileError}</p>
                           </div>
                           <label htmlFor="file-upload" className="cursor-pointer">
-                            <span className="text-[#44D62C] hover:text-[#3BC424] font-medium text-sm">Try another file</span>
+                            <span className="text-[#22C55E] hover:text-[#16A34A] font-medium text-sm">Try another file</span>
                           </label>
                         </div>
                       ) : fileName && parsedData && parsedData.source === 'file' ? (
@@ -470,7 +495,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                         <>
                           <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                           <label htmlFor="file-upload" className="cursor-pointer block">
-                            <span className="text-[#44D62C] hover:text-[#3BC424] font-medium">Upload CSV or Excel file</span>
+                            <span className="text-[#22C55E] hover:text-[#16A34A] font-medium">Upload CSV or Excel file</span>
                           </label>
                         </>
                       )}
@@ -491,7 +516,9 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                   <TabsContent value="manual">
                     <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
                        <ManualTransactionEntry 
-                          onValidDataConfirmed={handleManualDataConfirmed} 
+                        onValidDataConfirmed={handleManualDataConfirmed}
+                        showProceedButton={false}
+                        autoConfirm={true}
                        />
                        {parsedData && parsedData.source === 'manual' && (
                          <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
@@ -513,8 +540,12 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                 </Label>
                 <MCCDropdown
                   value={mcc || ''}
-                  onChange={(value) => setValue('mcc', value)}
+                  onChange={(value) => setValue('mcc', value, { shouldValidate: true, shouldDirty: true })}
                   error={errors.mcc}
+                />
+                <input
+                  type="hidden"
+                  {...register('mcc', { required: 'MCC is required' })}
                 />
                 {errors.mcc && <p className="mt-1 text-sm text-red-600">{errors.mcc.message}</p>}
               </div>
@@ -529,7 +560,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                   {...register('feeStructure', {
                     required: 'Fee structure is required'
                   })}
-                  className="mt-2 w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#44D62C] focus:border-[#44D62C] bg-white text-gray-700"
+                  className="mt-2 w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#22C55E] focus:border-[#22C55E] bg-white text-gray-700"
                 >
                   <option value="">Select structure</option>
                   <option value="percentage">% (Percentage only)</option>
@@ -560,26 +591,6 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
                 </div>
               )}
 
-              {/* Minimum per Transaction Fee */}
-              <div>
-                <Label htmlFor="minimumFee" className="text-lg font-semibold text-gray-900 mb-2">
-                  Minimum per Transaction Fee <span className="text-gray-500 font-normal">(Optional)</span>
-                </Label>
-                <Input
-                  id="minimumFee"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  {...register('minimumFee', {
-                    min: { value: 0, message: 'Minimum fee cannot be negative' },
-                    validate: (value) => !value || parseFloat(value) >= 0 || 'Minimum fee must be a positive number'
-                  })}
-                  placeholder="Enter minimum fee ($)"
-                  className="mt-2"
-                />
-                {errors.minimumFee && <p className="mt-1 text-sm text-red-600">{errors.minimumFee.message}</p>}
-              </div>
-
               {/* Desired Margin */}
               <div>
                 <Label htmlFor="desiredMargin" className="text-lg font-semibold text-gray-900 mb-2">
@@ -604,7 +615,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
               <Button
                 type="submit"
                 disabled={isLoading || !parsedData || !mcc || !feeStructure}
-                className="w-full bg-[#44D62C] hover:bg-[#3BC424] text-white font-semibold py-4 text-lg rounded-xl disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="w-full bg-[#22C55E] hover:bg-[#16A34A] text-white font-semibold py-4 text-lg rounded-xl disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 {isLoading ? 'Calculating...' : 'Calculate Results'}
               </Button>

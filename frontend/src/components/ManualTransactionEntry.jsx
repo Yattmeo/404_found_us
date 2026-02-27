@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AlertCircle, Calculator } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Label } from './ui/Label';
 
-const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
+const ManualTransactionEntry = ({
+  onValidDataConfirmed,
+  showProceedButton = true,
+  autoConfirm = false,
+}) => {
   const [averageTicketSize, setAverageTicketSize] = useState('');
   const [monthlyTransactions, setMonthlyTransactions] = useState('');
   const [errors, setErrors] = useState({ averageTicketSize: '', monthlyTransactions: '' });
   const [estimatedVolume, setEstimatedVolume] = useState(0);
+  const lastAutoConfirmedRef = useRef('');
 
   // Update estimated volume whenever inputs change
   useEffect(() => {
@@ -54,26 +59,58 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
     return isValid;
   };
 
+  const buildGeneratedData = () => {
+    const avgTicket = parseFloat(averageTicketSize);
+    const numTransactions = parseInt(monthlyTransactions, 10);
+    const today = new Date().toISOString().split('T')[0];
+
+    return Array.from({ length: numTransactions }, (_, i) => ({
+      transaction_id: `MANUAL_${String(i + 1).padStart(6, '0')}`,
+      transaction_date: today,
+      merchant_id: 'MANUAL_ENTRY',
+      amount: avgTicket,
+      transaction_type: 'Sale',
+      card_type: 'Unknown'
+    }));
+  };
+
   const handleProceed = () => {
     if (validateFields()) {
-      const avgTicket = parseFloat(averageTicketSize);
-      const numTransactions = parseInt(monthlyTransactions, 10);
-      
-      const today = new Date().toISOString().split('T')[0];
-      
-      // Generate data structure expected by parent component
-      const generatedData = Array.from({ length: numTransactions }, (_, i) => ({
-        transaction_id: `MANUAL_${String(i + 1).padStart(6, '0')}`,
-        transaction_date: today,
-        merchant_id: 'MANUAL_ENTRY',
-        amount: avgTicket, 
-        transaction_type: 'Sale',
-        card_type: 'Unknown'
-      }));
-
-      onValidDataConfirmed(generatedData);
+      onValidDataConfirmed(buildGeneratedData());
     }
   };
+
+  useEffect(() => {
+    if (!autoConfirm) {
+      return;
+    }
+
+    const avg = parseFloat(averageTicketSize);
+    const count = parseFloat(monthlyTransactions);
+    const countInt = parseInt(monthlyTransactions, 10);
+
+    const isValid =
+      averageTicketSize.trim() !== '' &&
+      monthlyTransactions.trim() !== '' &&
+      !isNaN(avg) &&
+      avg > 0 &&
+      !isNaN(count) &&
+      count > 0 &&
+      Number.isInteger(count) &&
+      countInt > 0;
+
+    if (!isValid) {
+      return;
+    }
+
+    const signature = `${averageTicketSize}|${monthlyTransactions}`;
+    if (lastAutoConfirmedRef.current === signature) {
+      return;
+    }
+
+    lastAutoConfirmedRef.current = signature;
+    onValidDataConfirmed(buildGeneratedData());
+  }, [averageTicketSize, monthlyTransactions, autoConfirm, onValidDataConfirmed]);
 
   const handleAverageTicketSizeChange = (e) => {
     const value = e.target.value;
@@ -104,7 +141,7 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
       <div className="bg-white rounded-xl p-6 border border-gray-100 shadow-sm">
         <div className="flex items-center gap-3 mb-6">
           <div className="bg-green-100 p-2 rounded-lg">
-            <Calculator className="w-6 h-6 text-[#44D62C]" />
+            <Calculator className="w-6 h-6 text-[#22C55E]" />
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900">Merchant Profile Estimation</h3>
@@ -169,7 +206,7 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
             <p className="text-sm font-medium text-green-800 uppercase tracking-wide mb-1">
               Estimated Monthly Volume
             </p>
-            <p className="text-3xl font-bold text-[#44D62C]">
+            <p className="text-3xl font-bold text-[#22C55E]">
               {formatCurrency(estimatedVolume)}
             </p>
             <p className="text-xs text-green-700 mt-2">
@@ -179,16 +216,18 @@ const ManualTransactionEntry = ({ onValidDataConfirmed }) => {
         )}
 
         {/* Proceed Button */}
-        <div className="mt-8">
-          <Button
-            type="button"
-            onClick={handleProceed}
-            disabled={!hasValidData}
-            className="w-full h-12 text-lg font-medium shadow-md transition-all hover:shadow-lg disabled:opacity-50 disabled:shadow-none"
-          >
-            Generate & Proceed
-          </Button>
-        </div>
+        {showProceedButton && (
+          <div className="mt-8">
+            <Button
+              type="button"
+              onClick={handleProceed}
+              disabled={!hasValidData}
+              className="w-full h-12 text-lg font-medium shadow-md transition-all hover:shadow-lg disabled:opacity-50 disabled:shadow-none"
+            >
+              Generate & Proceed
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

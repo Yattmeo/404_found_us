@@ -6,6 +6,18 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
     return null;
   }
 
+  const formatCurrency = (value) => {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return null;
+    }
+    return `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const hasRangeValues = results.quotableRange?.min !== null &&
+    results.quotableRange?.min !== undefined &&
+    results.quotableRange?.max !== null &&
+    results.quotableRange?.max !== undefined;
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
@@ -31,7 +43,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
               <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
               <p className="text-4xl font-bold text-gray-900">
                 {results.suggestedRate !== null && results.suggestedRate !== undefined 
-                  ? results.suggestedRate 
+                  ? `${results.suggestedRate}%`
                   : <span className="text-xl text-gray-400">Pending backend calculation</span>}
               </p>
             </div>
@@ -41,7 +53,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
               <p className="text-sm font-medium text-gray-700 mb-2">Margin:</p>
               <p className="text-4xl font-bold text-gray-900">
                 {results.marginBps !== null && results.marginBps !== undefined
-                  ? results.marginBps
+                  ? `${results.marginBps} bps`
                   : <span className="text-xl text-gray-400">Pending backend calculation</span>}
               </p>
             </div>
@@ -51,7 +63,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
               <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
               <p className="text-4xl font-bold text-gray-900">
                 {results.estimatedProfit !== null && results.estimatedProfit !== undefined
-                  ? results.estimatedProfit
+                  ? formatCurrency(results.estimatedProfit)
                   : <span className="text-xl text-gray-400">Pending backend calculation</span>}
               </p>
             </div>
@@ -82,6 +94,26 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
               </div>
             </div>
 
+            {hasRangeValues && (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Quotable Range Chart</h3>
+                <div className="space-y-3">
+                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-[#22C55E] w-full"></div>
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-600">
+                    <span>{results.quotableRange.min}%</span>
+                    <span>{results.quotableRange.max}%</span>
+                  </div>
+                  {results.suggestedRate !== null && results.suggestedRate !== undefined && (
+                    <p className="text-sm text-gray-700">
+                      Suggested quote: <span className="font-semibold text-gray-900">{results.suggestedRate}%</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Expected Metrics */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Expected Metrics</h3>
@@ -91,7 +123,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                     <span className="text-sm text-gray-600">Expected ATS:</span>
                     <span className="text-lg font-semibold text-gray-900">
                       {results.expectedATS !== null && results.expectedATS !== undefined
-                        ? results.expectedATS
+                        ? formatCurrency(results.expectedATS)
                         : <span className="text-sm text-gray-400">Pending</span>}
                     </span>
                   </div>
@@ -107,7 +139,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                     <span className="text-sm text-gray-600">Expected Volume:</span>
                     <span className="text-lg font-semibold text-gray-900">
                       {results.expectedVolume !== null && results.expectedVolume !== undefined
-                        ? results.expectedVolume
+                        ? formatCurrency(results.expectedVolume)
                         : <span className="text-sm text-gray-400">Pending</span>}
                     </span>
                   </div>
@@ -119,6 +151,37 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                 </div>
               </div>
             </div>
+
+            {(results.expectedATS !== null && results.expectedATS !== undefined) ||
+            (results.expectedVolume !== null && results.expectedVolume !== undefined) ? (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Expected Metrics Chart</h3>
+                <div className="space-y-4">
+                  {results.expectedATS !== null && results.expectedATS !== undefined && (
+                    <div>
+                      <div className="flex justify-between text-sm text-gray-700 mb-1">
+                        <span>Expected ATS</span>
+                        <span className="font-medium">{formatCurrency(results.expectedATS)}</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-[#22C55E] w-3/5"></div>
+                      </div>
+                    </div>
+                  )}
+                  {results.expectedVolume !== null && results.expectedVolume !== undefined && (
+                    <div>
+                      <div className="flex justify-between text-sm text-gray-700 mb-1">
+                        <span>Expected Volume</span>
+                        <span className="font-medium">{formatCurrency(results.expectedVolume)}</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-[#16A34A] w-4/5"></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
 
             {/* Merchant Data Summary */}
             {results.parsedData && (

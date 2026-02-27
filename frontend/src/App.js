@@ -22,7 +22,7 @@ function App() {
 
   // Show calculator pages
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#E8F5F0]">
       {currentView === 'current-rates' && (
         <EnhancedMerchantFeeCalculator onBackToLanding={handleBackToLanding} />
       )}

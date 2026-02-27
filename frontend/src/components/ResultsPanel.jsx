@@ -4,6 +4,12 @@ import { Button } from './ui/Button';
 
 const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
+  const hasQuotedMargin = results?.margin !== null && results?.margin !== undefined;
+  const hasQuotedProfit = results?.estimatedProfit !== null && results?.estimatedProfit !== undefined;
+  const hasRangeValues = results?.quotableRange?.min !== null &&
+    results?.quotableRange?.min !== undefined &&
+    results?.quotableRange?.max !== null &&
+    results?.quotableRange?.max !== undefined;
 
   if (!results) {
     return (
@@ -109,7 +115,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                         {results.profitDistribution.map((bar, idx) => (
                           <div key={idx} className="flex flex-col items-center flex-1">
                             <div
-                              className="w-full bg-[#44D62C] rounded-t transition-all hover:bg-[#3BC424]"
+                              className="w-full bg-[#22C55E] rounded-t transition-all hover:bg-[#16A34A]"
                               style={{ height: `${(bar.value / 60) * 100}%` }}
                             ></div>
                             <span className="text-xs text-gray-600 mt-1">{bar.label}</span>
@@ -161,23 +167,21 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                 </p>
               </div>
 
-              {/* Margin */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <p className="text-sm font-medium text-gray-700 mb-2">Margin (in bps):</p>
-                <p className="text-4xl font-bold text-gray-900">
-                  {results.margin !== null && results.margin !== undefined ? results.margin : 'Pending backend calculation'}
-                </p>
-              </div>
+              {hasQuotedMargin && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Margin (in bps):</p>
+                  <p className="text-4xl font-bold text-gray-900">{results.margin}</p>
+                </div>
+              )}
 
-              {/* Estimated Profit */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
-                <p className="text-4xl font-bold text-gray-900">
-                  {results.estimatedProfit !== null && results.estimatedProfit !== undefined 
-                    ? `$${results.estimatedProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : 'Pending backend calculation'}
-                </p>
-              </div>
+              {hasQuotedProfit && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
+                  <p className="text-4xl font-bold text-gray-900">
+                    {`$${results.estimatedProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Right Column */}
@@ -231,6 +235,26 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                   </div>
                 </div>
               </div>
+
+              {hasRangeValues && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Quotable Range Chart</h3>
+                  <div className="space-y-3">
+                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-[#22C55E] w-full"></div>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-600">
+                      <span>{results.quotableRange.min}%</span>
+                      <span>{results.quotableRange.max}%</span>
+                    </div>
+                    {results.suggestedRate !== null && results.suggestedRate !== undefined && (
+                      <p className="text-sm text-gray-700">
+                        Suggested quote: <span className="font-semibold text-gray-900">{results.suggestedRate}%</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

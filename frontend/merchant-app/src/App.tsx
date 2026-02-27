@@ -42,7 +42,6 @@ export default function App() {
   const paymentBrandMap: Record<string, string> = {
     visa: 'Visa',
     mastercard: 'Mastercard',
-    amex: 'American Express',
   };
 
   const buildPlaceholderQuote = (data: BusinessData): QuoteResult => {

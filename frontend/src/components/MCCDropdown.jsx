@@ -51,7 +51,7 @@ const MCCDropdown = ({ value, onChange, error }) => {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`w-full flex items-center justify-between px-4 py-3 border rounded-2xl focus:ring-2 focus:ring-[#44D62C] focus:border-[#44D62C] bg-white text-left ${
+        className={`w-full flex items-center justify-between px-4 py-3 border rounded-2xl focus:ring-2 focus:ring-[#22C55E] focus:border-[#22C55E] bg-white text-left ${
           error ? 'border-red-500' : 'border-gray-300'
         }`}
       >
@@ -75,7 +75,7 @@ const MCCDropdown = ({ value, onChange, error }) => {
                   handleCustomSubmit();
                 }
               }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#44D62C] focus:border-[#44D62C] text-sm"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#22C55E] focus:border-[#22C55E] text-sm"
             />
           </div>
           <div className="max-h-60 overflow-y-auto">
@@ -87,7 +87,7 @@ const MCCDropdown = ({ value, onChange, error }) => {
                 {search.trim() && (
                   <button
                     onClick={handleCustomSubmit}
-                    className="w-full px-4 py-2 bg-[#44D62C] hover:bg-[#3BC424] text-white rounded-lg text-sm font-medium transition-colors"
+                    className="w-full px-4 py-2 bg-[#22C55E] hover:bg-[#16A34A] text-white rounded-lg text-sm font-medium transition-colors"
                   >
                     Use "{search.trim()}" as custom MCC
                   </button>
@@ -112,7 +112,7 @@ const MCCDropdown = ({ value, onChange, error }) => {
                       <div className="font-medium text-sm text-gray-900">{mcc.code}</div>
                       <div className="text-xs text-gray-600">{mcc.description}</div>
                     </div>
-                    {value === mcc.code && <Check className="w-4 h-4 text-[#44D62C]" />}
+                    {value === mcc.code && <Check className="w-4 h-4 text-[#22C55E]" />}
                   </div>
                 ))}
                 {search.trim() && (

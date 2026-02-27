@@ -127,12 +127,18 @@ export const merchantFeeAPI = {
 // Desired Margin Calculator API endpoints
 export const desiredMarginAPI = {
   // Calculate desired margin rates
-  calculateDesiredMargin: async (transactions, mcc, desiredMargin = 0.015) => {
+  calculateDesiredMargin: async (payloadOrTransactions, mcc, desiredMargin = 0.015) => {
     try {
+      const payload = Array.isArray(payloadOrTransactions)
+        ? {
+            transactions: payloadOrTransactions,
+            mcc,
+            desired_margin: desiredMargin,
+          }
+        : payloadOrTransactions;
+
       const response = await api.post('/calculations/desired-margin', {
-        transactions,
-        mcc,
-        desired_margin: desiredMargin,
+        ...payload,
       });
       return response.data;
     } catch (error) {

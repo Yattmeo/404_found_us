@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Upload, FileCheck, AlertCircle, X } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { Button } from './ui/Button';
+import { parseFileData } from '../utils/fileParser';
 
 const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
   const [dragActive, setDragActive] = useState(false);
@@ -13,7 +13,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
   const [showPreview, setShowPreview] = useState(false);
   const [fullData, setFullData] = useState([]);
 
-  const requiredColumns = ['transaction_id', 'transaction_date', 'merchant_id', 'amount', 'transaction_type', 'card_type'];
+  const requiredColumns = ['transaction_id', 'transaction_date', 'card_brand', 'merchant_id', 'amount', 'transaction_type', 'card_type'];
 
   const handleDownloadTemplate = () => {
     const headers = requiredColumns.join(',');
@@ -44,157 +44,6 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
     }
   };
 
-  const validateDate = (dateStr) => {
-    if (!dateStr) return false;
-    
-    const trimmed = dateStr.trim();
-    let parsedDate;
-    
-    // Try to parse different formats - support flexible day/month (1 or 2 digits)
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
-      // D/M/YYYY or DD/MM/YYYY
-      const [day, month, year] = trimmed.split('/');
-      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) {
-      // YYYY-M-D or YYYY-MM-DD
-      const [year, month, day] = trimmed.split('-');
-      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(trimmed)) {
-      // D-M-YYYY or DD-MM-YYYY
-      const [day, month, year] = trimmed.split('-');
-      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    } else if (/^\d{8}$/.test(trimmed)) {
-      // DDMMYYYY
-      const day = trimmed.substring(0, 2);
-      const month = trimmed.substring(2, 4);
-      const year = trimmed.substring(4, 8);
-      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    } else {
-      return false;
-    }
-    
-    // Check if date is valid
-    if (!(parsedDate instanceof Date) || isNaN(parsedDate.getTime())) {
-      return false;
-    }
-    
-    // Check if date is not in the future
-    const today = new Date();
-    today.setHours(23, 59, 59, 999); // Set to end of today
-    
-    return parsedDate <= today;
-  };
-
-  const validateAmount = (amount) => {
-    const num = parseFloat(amount);
-    return !isNaN(num) && isFinite(num) && num > 0;
-  };
-
-  const validateCSVStructure = (input) => {
-    let lines;
-    
-    // Handle both CSV string and Excel array inputs
-    if (typeof input === 'string') {
-      lines = input.split('\n').filter(line => line.trim());
-    } else if (Array.isArray(input)) {
-      lines = input;
-    } else {
-      return { valid: false, data: [], errors: [{ row: 0, column: 'file', error: 'Invalid file format' }] };
-    }
-    
-    if (lines.length < 1) {
-      return { valid: false, data: [], errors: [{ row: 0, column: 'file', error: 'File is empty' }] };
-    }
-
-    // Get headers
-    let headers = [];
-    if (typeof lines[0] === 'string') {
-      headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-    } else if (Array.isArray(lines[0])) {
-      headers = lines[0].map(h => String(h).trim().toLowerCase());
-    }
-    
-    const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-    if (missingColumns.length > 0) {
-      return { 
-        valid: false, 
-        data: [], 
-        errors: [{ 
-          row: 0, 
-          column: missingColumns.join(', '), 
-          error: `Missing required columns: ${missingColumns.join(', ')}` 
-        }] 
-      };
-    }
-
-    const errors = [];
-    const data = [];
-    const transactionIds = new Set();
-
-    for (let i = 1; i < lines.length; i++) {
-      let values;
-      
-      if (typeof lines[i] === 'string') {
-        values = lines[i].split(',').map(v => v.trim());
-      } else if (Array.isArray(lines[i])) {
-        values = lines[i].map(v => String(v).trim());
-      } else {
-        continue;
-      }
-      
-      const row = {};
-      
-      headers.forEach((header, index) => {
-        row[header] = values[index] || '';
-      });
-
-      requiredColumns.forEach(col => {
-        if (!row[col] || row[col] === '') {
-          errors.push({
-            row: i,
-            column: col,
-            error: `Required field cannot be empty`
-          });
-        }
-      });
-
-      // Check for duplicate transaction_id
-      if (row['transaction_id']) {
-        if (transactionIds.has(row['transaction_id'])) {
-          errors.push({
-            row: i,
-            column: 'transaction_id',
-            error: 'Duplicate transaction ID - must be unique'
-          });
-        } else {
-          transactionIds.add(row['transaction_id']);
-        }
-      }
-
-      if (row['transaction_date'] && !validateDate(row['transaction_date'])) {
-        errors.push({
-          row: i,
-          column: 'transaction_date',
-          error: 'Invalid date format or future date. Use DD/MM/YYYY, YYYY-MM-DD, or MM/DD/YYYY. Date cannot be in the future.'
-        });
-      }
-
-      if (row['amount'] && !validateAmount(row['amount'])) {
-        errors.push({
-          row: i,
-          column: 'amount',
-          error: 'Amount must be a number greater than 0'
-        });
-      }
-
-      if (errors.filter(e => e.row === i).length === 0) {
-        data.push(row);
-      }
-    }
-
-    return { valid: errors.length === 0, data, errors };
-  };
-
   const handleFile = async (file) => {
     // Check file type - allow CSV or Excel
     const isCSV = file.type === 'text/csv' || file.name.endsWith('.csv');
@@ -216,38 +65,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
     setIsValidating(true);
 
     try {
-      let validation;
-      
-      if (isExcel) {
-        // Parse Excel file
-        const arrayBuffer = await file.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet);
-        
-        // Convert to array format matching CSV structure
-        // Include headers as first row
-        const rows = [];
-        if (jsonData.length > 0) {
-          // Get headers from first object
-          const headers = Object.keys(jsonData[0]);
-          rows.push(headers);
-          
-          // Add data rows
-          jsonData.forEach((row) => {
-            const values = headers.map(header => 
-              row[header] ? String(row[header]).trim() : ''
-            );
-            rows.push(values);
-          });
-        }
-        
-        validation = validateCSVStructure(rows);
-      } else {
-        // Parse CSV file
-        const text = await file.text();
-        validation = validateCSVStructure(text);
-      }
+      const validation = await parseFileData(file, requiredColumns);
 
       if (validation.errors.length === 0) {
         // Show preview of first 10 rows
@@ -323,7 +141,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
         <>
           <div
             className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-colors ${
-              dragActive ? 'border-[#44D62C] bg-green-50' : 'border-gray-300 hover:border-[#44D62C]'
+              dragActive ? 'border-[#22C55E] bg-green-50' : 'border-gray-300 hover:border-[#22C55E]'
             }`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
@@ -341,7 +159,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
             <div className="space-y-4">
               {isValidating ? (
                 <div className="flex flex-col items-center gap-2">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#44D62C]"></div>
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#22C55E]"></div>
                   <p className="text-sm text-gray-600">Validating file...</p>
                 </div>
               ) : fileName && validationErrors.length > 0 ? (
@@ -352,7 +170,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                     <p className="text-sm text-red-600 mt-1">{validationErrors.length} validation error(s) found</p>
                   </div>
                   <label htmlFor="file-upload" className="cursor-pointer">
-                    <span className="inline-flex items-center gap-2 px-4 py-2 bg-[#44D62C] hover:bg-[#3BC424] text-white rounded-lg font-medium text-sm transition-colors">
+                    <span className="inline-flex items-center gap-2 px-4 py-2 bg-[#22C55E] hover:bg-[#16A34A] text-white rounded-lg font-medium text-sm transition-colors">
                       <Upload className="w-4 h-4" />
                       Re-upload File
                     </span>
@@ -369,7 +187,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                   <Upload className="w-12 h-12 text-gray-400 mx-auto" />
                   <div>
                     <label htmlFor="file-upload" className="cursor-pointer">
-                      <span className="text-[#44D62C] hover:text-[#3BC424] font-medium">Click to upload</span>
+                      <span className="text-[#22C55E] hover:text-[#16A34A] font-medium">Click to upload</span>
                       <span className="text-gray-600"> or drag and drop</span>
                     </label>
                     <p className="text-xs text-gray-500 mt-1">CSV or Excel files (.csv, .xlsx, .xls)</p>
@@ -381,7 +199,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
                           e.stopPropagation();
                           handleDownloadTemplate();
                         }}
-                        className="text-[#44D62C] hover:text-[#3BC424] underline font-medium"
+                        className="text-[#22C55E] hover:text-[#16A34A] underline font-medium"
                       >
                         Download Template
                       </button>
