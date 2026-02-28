@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class QuoteChargeItem(BaseModel):
     name: str
     value: float
+    waived: bool = False
 
 
 class QuoteSummary(BaseModel):

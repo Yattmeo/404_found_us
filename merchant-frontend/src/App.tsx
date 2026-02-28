@@ -17,8 +17,8 @@ export interface BusinessData {
 export interface QuoteResult {
   in_person_rate_range: string;
   online_rate_range: string;
-  other_potential_transaction_charges: Array<{ name: string; value: number }>;
-  other_monthly_charges: Array<{ name: string; value: number }>;
+  other_potential_transaction_charges: Array<{ name: string; value: number; waived?: boolean }>;
+  other_monthly_charges: Array<{ name: string; value: number; waived?: boolean }>;
   quote_summary: {
     payment_brands_accepted: string[];
     business_name: string;
@@ -64,14 +64,10 @@ export default function App() {
     const onlineLower = inPersonLower + 0.1;
     const onlineUpper = inPersonUpper + 0.1;
 
-    const otherMonthlyCharges: Array<{ name: string; value: number }> = [
+    const otherMonthlyCharges: Array<{ name: string; value: number; waived?: boolean }> = [
       { name: 'Point-of-sale terminal (per terminal)', value: 25 },
-      { name: 'Gateway Charge', value: 16 },
+      { name: 'Gateway Charge', value: 16, waived: monthlyTransactions >= 1000 },
     ];
-
-    if (monthlyTransactions >= 1000) {
-      otherMonthlyCharges.push({ name: 'Gateway Charge Waiver', value: -16 });
-    }
 
     return {
       in_person_rate_range: `${inPersonLower.toFixed(1)}-${inPersonUpper.toFixed(1)}%`,

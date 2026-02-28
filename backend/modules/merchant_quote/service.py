@@ -133,10 +133,8 @@ class MerchantQuoteService:
 
         monthly_charges = [
             QuoteChargeItem(name="Point-of-sale terminal (per terminal)", value=25.0),
-            QuoteChargeItem(name="Gateway Charge", value=16.0),
+            QuoteChargeItem(name="Gateway Charge", value=16.0, waived=monthly_txns >= 1000),
         ]
-        if monthly_txns >= 1000:
-            monthly_charges.append(QuoteChargeItem(name="Gateway Charge Waiver", value=-16.0))
 
         quote_summary = QuoteSummary(
             payment_brands_accepted=payload.payment_brands_accepted,

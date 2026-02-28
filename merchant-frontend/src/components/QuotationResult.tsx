@@ -14,6 +14,23 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
   };
 
   const acceptedBrands = quoteResult.quote_summary.payment_brands_accepted;
+  const hasWaiverLine = quoteResult.other_monthly_charges.some((charge) => /waiver/i.test(charge.name));
+  const monthlyChargesForDisplay = quoteResult.other_monthly_charges
+    .filter((charge) => !/waiver/i.test(charge.name))
+    .map((charge) => {
+      const isGatewayCharge = /gateway charge/i.test(charge.name);
+      const isWaived = Boolean(charge.waived) || (isGatewayCharge && hasWaiverLine);
+      const displayValue = isWaived
+        ? 'Waived'
+        : charge.value < 0
+          ? `-${formatCurrency(Math.abs(charge.value))}`
+          : formatCurrency(charge.value);
+
+      return {
+        name: charge.name,
+        displayValue,
+      };
+    });
 
   return (
     <div className="space-y-6">
@@ -34,7 +51,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
 
       {/* Main pricing table */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
-        <h3 className="text-lg font-medium text-gray-900 mb-1">Your rates</h3>
+        <h3 className="text-lg font-medium text-gray-900 mb-1">Estimated rates</h3>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
@@ -55,6 +72,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
             </tbody>
           </table>
         </div>
+        <p className="mt-6 text-gray-600">Reach out to our sales team for a more precise quote.</p>
       </div>
 
       {/* Other potential transaction charges */}
@@ -78,10 +96,10 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
           <h3 className="text-lg font-medium text-gray-900 mb-6">Other monthly charges</h3>
           
           <div className="space-y-4">
-            {quoteResult.other_monthly_charges.map((charge) => (
+            {monthlyChargesForDisplay.map((charge) => (
               <div key={charge.name} className="flex justify-between items-center pb-3 border-b border-gray-200 last:border-b-0">
                 <p className="text-sm text-gray-700">{charge.name}</p>
-                <p className="text-sm font-semibold text-gray-900">{charge.value < 0 ? `-${formatCurrency(Math.abs(charge.value))}` : formatCurrency(charge.value)}</p>
+                <p className="text-sm font-semibold text-gray-900">{charge.displayValue}</p>
               </div>
             ))}
           </div>
