@@ -3,9 +3,383 @@
 ## Overview
 
 The ML service runs as a separate Docker container (`ml-service:8001`).  
-It receives an enriched CSV + cost metrics from the backend automatically after every `/calculations/transaction-costs` call, then runs 4 engines in sequence.
+It receives an enriched CSV + cost metrics from the backend automatically after every `/calculations/transaction-costs` call, then runs 3 engines in sequence via `POST /ml/process`.
 
 Each engine is a self-contained module under `ml_service/modules/`:
+
+| Module folder | Status | Endpoint |
+|---|---|---|
+| `rate_optimisation/` | **Stub — implement your model** | `POST /ml/rate-optimisation` |
+| `tpv_prediction/` | **Stub — implement your model** | `POST /ml/tpv-prediction` |
+| `knn_rate_quote/` | **Implemented** (KNN, PostgreSQL-backed) | `POST /ml/knn-rate-quote` |
+| `cluster_generation/` | Scaffold only — no active endpoint | — |
+| `cluster_assignment/` | Scaffold only — no active endpoint | — |
+
+> `cluster_generation` and `cluster_assignment` have a full folder structure (`service.py`, `schemas.py`, `controller.py`) but are **not wired into any route**. Wire them in `routes.py` when ready.
+
+---
+
+## What You Receive (Inputs)
+
+Every engine receives the same two inputs:
+
+### `df` — pandas DataFrame (the enriched CSV)
+Columns available:
+
+| Column | Description |
+|---|---|
+| `transaction_id` | Unique transaction identifier |
+| `transaction_date` | Date of transaction |
+| `merchant_id` | Merchant identifier |
+| `amount` | Transaction amount ($) |
+| `transaction_type` | Transaction channel |
+| `card_type` | Visa / Mastercard / Amex |
+| `card_brand` | Card network |
+| `mcc` | Merchant Category Code |
+| `product` | Card product type |
+| `percent_rate` | Interchange percentage rate |
+| `fixed_rate` | Interchange fixed fee |
+| `max_fee` | Maximum fee cap |
+| `card_cost` | Interchange card fee ($) |
+| `network_percent_rate` | Network percentage rate |
+| `network_fixed_rate` | Network fixed fee |
+| `network_cost` | Network fee ($) |
+| `total_cost` | `card_cost + network_cost` ($) |
+| `match_found` | Whether a fee rule was matched |
+
+### `metrics` — dict
+```python
+{
+    "mcc":                   5499,      # Merchant Category Code
+    "total_cost":            123.45,    # Sum of all transaction costs
+    "total_payment_volume":  7500.00,   # Sum of all transaction amounts
+    "effective_rate":        1.646,     # total_cost / total_payment_volume × 100
+    "slope":                 0.013,     # Linear regression slope of weekly costs (optional)
+    "cost_variance":         0.0004,    # Variance of weekly transaction costs (optional)
+}
+```
+
+---
+
+## Where to Add Your Model Logic
+
+**The only file you need to edit is `service.py` inside your module.**
+
+```
+ml_service/modules/<your_module>/
+    service.py     ← PUT YOUR MODEL LOGIC HERE
+    schemas.py     ← add/change output fields here if needed
+    controller.py  ← do not touch
+    __init__.py    ← do not touch
+```
+
+### Steps
+
+**1. Open your `service.py`**  
+Find the stub method (`optimise()` for rate optimisation, `predict()` for TPV prediction).  
+Replace the stub logic with your model.
+
+**2. Update `schemas.py` if your output fields change**  
+Each engine's schema defines what the API returns. Your `service.py` method must return an instance of that schema.
+
+| Engine | Schema class | Return fields |
+|---|---|---|
+| `rate_optimisation` | `RateOptimisationResult` | `recommended_rate`, `min_viable_rate`, `max_viable_rate`, `confidence`, `notes` |
+| `tpv_prediction` | `TPVPredictionResult` | `predicted_tpv`, `prediction_horizon`, `confidence`, `notes` |
+| `knn_rate_quote` | `KNNRateQuoteResult` | `forecast_proc_cost`, `context_len`, `horizon_len`, `k`, `end_month`, `notes` |
+| `cluster_generation` | `ClusterGenerationResult` | `n_clusters`, `cluster_labels`, `inertia`, `notes` |
+| `cluster_assignment` | `ClusterAssignmentResult` | `cluster_id`, `cluster_label`, `distance`, `notes` |
+
+**3. If you have a pre-trained model file (`.pkl`, `.joblib`, `.pt`, etc.)**  
+- Create the folder `ml_service/models/` if it doesn't exist  
+- Place your model file there  
+- Load it in `service.py` using `joblib.load()` or `torch.load()` etc.
+
+Example:
+```python
+import joblib
+from pathlib import Path
+
+MODEL_PATH = Path(__file__).parent.parent.parent / "models" / "your_model.pkl"
+_model = joblib.load(MODEL_PATH)
+```
+
+**4. If you need extra Python packages**  
+Add them to `ml_service/requirements.txt`, then rebuild:
+```bash
+docker compose build ml-service
+docker compose up ml-service
+```
+
+---
+
+## KNN Rate Quote Engine (Already Implemented)
+
+The KNN engine is fully implemented in `modules/knn_rate_quote/service.py`.  
+It requires a one-time data migration to seed PostgreSQL before it can respond:
+
+```bash
+docker compose exec ml-service python migrate_sqlite_to_postgres.py
+```
+
+This reads `rate_quote.sqlite` (mounted from `KNN Demo Service/KNN Demo Service/`) and populates two PostgreSQL tables:
+
+| Table | Description |
+|---|---|
+| `knn_transactions` | Historical transaction rows |
+| `knn_cost_type_ref` | Lookup table of valid `cost_type_id` values |
+
+**How the KNN engine works:**
+1. Loads all historical transactions from `knn_transactions`.
+2. Builds monthly feature vectors: per-`cost_type_id` percentages + `total_transactions` + `avg_amount`.
+3. Constructs a sliding-window pool of (context → target) pairs per calendar month.
+4. At inference, computes the query merchant's features and finds the `k` nearest neighbours (scikit-learn, Euclidean distance).
+5. Returns the mean of neighbours' target `proc_cost` values over the forecast horizon.
+
+**KNN tuning parameters** (edit in `service.py → KNNRateQuoteService.__init__`):
+
+| Parameter | Default | Description |
+|---|---|---|
+| `k` | `50` | Number of nearest neighbours |
+| `context_len` | `1` | Months of context used per query |
+| `horizon_len` | `3` | Months ahead to forecast |
+| `year_min` / `year_max` | `2017` / `2019` | Year range of reference data to use |
+
+---
+
+## Alternative Model Approaches (for stub engines)
+
+### Option A — Return results only (no storage)
+
+The simplest option. Your model computes a result and returns it. Nothing is saved.
+
+```python
+# service.py
+class RateOptimisationService:
+    @staticmethod
+    def optimise(df, metrics, db):
+        recommended_rate = metrics["effective_rate"] * 1.05  # your logic here
+        return RateOptimisationResult(
+            recommended_rate=recommended_rate,
+            min_viable_rate=metrics["effective_rate"],
+            max_viable_rate=metrics["effective_rate"] * 1.2,
+        )
+```
+
+---
+
+### Option B — Pre-trained model file (scikit-learn / XGBoost / LightGBM)
+
+Train your model locally, save it with `joblib`, load it at runtime.
+
+```python
+import joblib
+from pathlib import Path
+
+_MODEL = joblib.load(Path(__file__).parent.parent.parent / "models" / "tpv_model.pkl")
+
+class TPVPredictionService:
+    @staticmethod
+    def predict(df, metrics, db):
+        X = [[metrics["total_payment_volume"], metrics["slope"] or 0.0]]
+        predicted = float(_MODEL.predict(X)[0])
+        return TPVPredictionResult(predicted_tpv=predicted, prediction_horizon="next_30_days")
+```
+
+> The `ml_service/models/` folder is inside the Docker volume — files placed there are available inside the container automatically.
+
+---
+
+### Option C — PyTorch / TensorFlow model
+
+```python
+import torch
+from pathlib import Path
+
+_MODEL = torch.load(Path(__file__).parent.parent.parent / "models" / "tpv_lstm.pt")
+_MODEL.eval()
+
+class TPVPredictionService:
+    @staticmethod
+    def predict(df, metrics, db):
+        x = torch.tensor([[
+            metrics["total_payment_volume"],
+            metrics["effective_rate"],
+            metrics["slope"] or 0.0,
+        ]], dtype=torch.float32)
+        with torch.no_grad():
+            predicted = float(_MODEL(x).item())
+        return TPVPredictionResult(predicted_tpv=predicted, prediction_horizon="next_30_days")
+```
+
+Add `torch` or `tensorflow` to `ml_service/requirements.txt` and rebuild.
+
+---
+
+### Option D — Time-series models (ARIMA / Prophet)
+
+Fit directly on `df` at request time. No pre-training needed.
+
+```python
+# requirements.txt: prophet
+from prophet import Prophet
+import pandas as pd
+
+class TPVPredictionService:
+    @staticmethod
+    def predict(df, metrics, db):
+        ts = (
+            df.rename(columns={"transaction_date": "ds", "amount": "y"})
+              .groupby("ds", as_index=False)["y"].sum()
+        )
+        ts["ds"] = pd.to_datetime(ts["ds"])
+        m = Prophet()
+        m.fit(ts)
+        future = m.make_future_dataframe(periods=30)
+        forecast = m.predict(future)
+        predicted = float(forecast["yhat"].iloc[-1])
+        return TPVPredictionResult(predicted_tpv=predicted, prediction_horizon="next_30_days")
+```
+
+---
+
+### Option E — Save results to a CSV file
+
+```python
+import pandas as pd
+from pathlib import Path
+
+OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+class RateOptimisationService:
+    @staticmethod
+    def optimise(df, metrics, db):
+        result_df = df.copy()
+        result_df["recommended_rate"] = metrics["effective_rate"] * 1.05
+        result_df.to_csv(OUTPUT_DIR / f"rate_optimisation_mcc{metrics['mcc']}.csv", index=False)
+        return RateOptimisationResult(
+            recommended_rate=metrics["effective_rate"] * 1.05,
+            min_viable_rate=metrics["effective_rate"],
+            max_viable_rate=metrics["effective_rate"] * 1.2,
+        )
+```
+
+---
+
+### Option F — Save results to PostgreSQL
+
+Use `db.add()` / `db.commit()` with a model defined in `ml_service/models.py`.  
+Define a new SQLAlchemy model there, then import and use it in `service.py`.
+
+```python
+from models import YourCustomModel
+
+record = YourCustomModel(
+    mcc=metrics["mcc"],
+    recommended_rate=recommended_rate,
+    # ...
+)
+db.add(record)
+db.commit()
+```
+
+---
+
+## Wiring Cluster Engines into Routes
+
+`cluster_generation` and `cluster_assignment` are scaffolded but not active.  
+To expose them, add endpoints to `ml_service/routes.py` following the same pattern as the existing engines:
+
+```python
+from modules.cluster_generation.controller import run_cluster_generation
+from modules.cluster_assignment.controller import run_cluster_assignment
+
+@router.post("/cluster-generation", tags=["Cluster Generation Engine"])
+async def cluster_generation_endpoint(...):
+    ...
+    return run_cluster_generation(df=df, metrics=metrics, db=db)
+```
+
+---
+
+## Testing Engines in Isolation (Postman)
+
+Active endpoints:
+
+```
+POST http://localhost/ml/process           ← full pipeline (called by backend)
+POST http://localhost/ml/rate-optimisation
+POST http://localhost/ml/tpv-prediction
+POST http://localhost/ml/knn-rate-quote
+```
+
+**Postman setup — form-data body for `/process`, `/rate-optimisation`, `/tpv-prediction`:**
+
+| Key | Type | Value |
+|---|---|---|
+| `enriched_csv` | File | upload a CSV from backend response |
+| `mcc` | Text | `5499` |
+| `total_cost` | Text | `123.45` |
+| `total_payment_volume` | Text | `7500.00` |
+| `effective_rate` | Text | `1.646` |
+| `slope` | Text | `0.013` (optional) |
+| `cost_variance` | Text | `0.0004` (optional) |
+
+**Additional fields for `/process` and `/knn-rate-quote`:**
+
+| Key | Type | Description |
+|---|---|---|
+| `card_type` | Text | `"visa"` \| `"mastercard"` \| `"both"` (optional) |
+| `monthly_txn_count` | Text | Override monthly transaction count (optional) |
+| `avg_amount` | Text | Override average transaction amount (optional) |
+| `as_of_date` | Text | ISO date string for KNN context end (optional) |
+
+> To get an enriched CSV to test with, call `POST /api/v1/calculations/transaction-costs?mcc=5499`  
+> with one of the files from `input_files/` — the response body is the enriched CSV.
+
+---
+
+## Database
+
+The ML service uses the same PostgreSQL instance as the main backend (`mldb`).  
+Tables are created automatically on container startup via `init_db()`.
+
+### Active tables
+
+| Table | ORM Model | Populated by |
+|---|---|---|
+| `knn_transactions` | `KNNTransaction` | `migrate_sqlite_to_postgres.py` |
+| `knn_cost_type_ref` | `KNNCostTypeRef` | `migrate_sqlite_to_postgres.py` |
+
+> There are no pgvector tables in the current production schema. The cluster engines' pgvector models (`ClusterCentroid`, `MerchantClusterVector`) referenced in older docs do not exist — define them in `models.py` if you implement those engines.
+
+### One-time KNN data migration
+
+Run once after first `docker compose up`:
+
+```bash
+docker compose exec ml-service python migrate_sqlite_to_postgres.py
+```
+
+The script is idempotent — re-running it skips rows that already exist.
+
+---
+
+## After Making Changes
+
+Restart the container to pick up code edits:
+```bash
+docker restart ml-service
+```
+
+Rebuild if you changed `requirements.txt` or `Dockerfile`:
+```bash
+docker compose build ml-service && docker compose up ml-service
+```
+
+Swagger UI for all ML endpoints: `http://localhost/ml/docs`
+
 
 | Module folder | Your job |
 |---|---|

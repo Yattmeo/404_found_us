@@ -61,8 +61,8 @@ export default function App() {
     baseRate = Math.max(baseRate, 1.5);
     const inPersonLower = Math.max(1.5, baseRate - 0.1);
     const inPersonUpper = baseRate + 0.1;
-    const onlineLower = inPersonLower + 0.2;
-    const onlineUpper = inPersonUpper + 0.2;
+    const onlineLower = inPersonLower + 0.1;
+    const onlineUpper = inPersonUpper + 0.1;
 
     const otherMonthlyCharges: Array<{ name: string; value: number }> = [
       { name: 'Point-of-sale terminal (per terminal)', value: 25 },

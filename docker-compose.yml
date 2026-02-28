@@ -39,9 +39,21 @@
     container_name: ml-frontend
     environment:
       - REACT_APP_BACKEND_URL=http://localhost/api/v1
+      - PUBLIC_URL=/sales
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+  merchant-frontend:
+    build:
+      context: ./merchant-frontend
+      dockerfile: Dockerfile
+    container_name: ml-merchant-frontend
     depends_on:
       - backend
     restart: unless-stopped
@@ -58,6 +70,7 @@
     depends_on:
       - backend
       - frontend
+      - merchant-frontend
       - ml-service
     restart: unless-stopped
     networks:

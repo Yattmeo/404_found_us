@@ -4,6 +4,7 @@
   import path from 'path';
 
   export default defineConfig({
+    base: '/merchant/',
     plugins: [react()],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
@@ -54,7 +55,7 @@
       outDir: 'build',
     },
     server: {
-      port: 3000,
-      open: true,
+      port: 3001,
+      open: false,
     },
   });

@@ -288,23 +288,20 @@ export function QuotationForm({ onSubmit }: QuotationFormProps) {
 
                 <div>
                   <label className="block text-sm text-gray-700 mb-2">Industry *</label>
-                  <input
-                    type="text"
-                    list="industry-options"
+                  <select
                     value={formData.industry}
                     onChange={(e) => {
                       updateField('industry', e.target.value);
                       if (errors.industry) setErrors((prev) => ({ ...prev, industry: undefined }));
                     }}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition"
-                    placeholder="Type or select MCC industry"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition bg-white appearance-none"
                     required
-                  />
-                  <datalist id="industry-options">
+                  >
+                    <option value="" disabled>Select MCC industry</option>
                     {industryOptions.map((industry) => (
-                      <option key={industry.value} value={industry.label} />
+                      <option key={industry.value} value={industry.label}>{industry.label}</option>
                     ))}
-                  </datalist>
+                  </select>
                   {errors.industry && <p className="mt-1 text-xs text-red-600">{errors.industry}</p>}
                 </div>
               </div>
