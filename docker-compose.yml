@@ -1,6 +1,4 @@
-﻿version: '3.8'
-
-services:
+﻿services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: ml-postgres
