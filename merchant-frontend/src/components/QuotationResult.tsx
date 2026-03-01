@@ -38,11 +38,6 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-xl font-medium text-gray-900">Your Payment Processing Quote</h2>
-          {isPlaceholderQuote && (
-            <span className="px-2 py-1 text-xs font-semibold rounded bg-amber-100 text-amber-800 border border-amber-200">
-              Placeholder
-            </span>
-          )}
         </div>
         <p className="text-gray-600">
           Quote prepared for <span className="font-semibold">{businessData.businessName}</span>
