@@ -76,3 +76,29 @@ The script is safe to re-run — it uses `if_exists="replace"` so it will overwr
 | `POST` | `/ml/rate-optimisation` | Rate Optimisation Engine |
 | `POST` | `/ml/tpv-prediction` | TPV Prediction Engine |
 | `POST` | `/ml/process` | Runs all three engines in sequence |
+
+---
+
+## Backend Integration Tests
+
+Integration tests are now scaffolded under `backend/tests/integration` and use an isolated SQLite test database with FastAPI dependency overrides.
+
+### Test files
+
+- `backend/tests/conftest.py`
+- `backend/tests/integration/test_api_integration.py`
+
+### Run locally (inside `backend/`)
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+
+### What is covered
+
+- Root + health endpoints
+- Merchant create/get/list flow
+- Transaction CSV upload + list flow
+- Merchant fee + desired margin calculation endpoints (success + validation)
+- MCC list/search/get endpoints (including error cases)

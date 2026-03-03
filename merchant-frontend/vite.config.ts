@@ -6,6 +6,9 @@
   export default defineConfig({
     base: '/merchant/',
     plugins: [react()],
+    esbuild: {
+      jsx: 'automatic',
+    },
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
       alias: {
@@ -48,6 +51,8 @@
         '@radix-ui/react-alert-dialog@1.1.6': '@radix-ui/react-alert-dialog',
         '@radix-ui/react-accordion@1.2.3': '@radix-ui/react-accordion',
         '@': path.resolve(__dirname, './src'),
+        react: path.resolve(__dirname, 'node_modules/react'),
+        'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
       },
     },
     build: {
@@ -57,5 +62,11 @@
     server: {
       port: 3001,
       open: false,
+    },
+    test: {
+      environment: 'jsdom',
+      globals: true,
+      setupFiles: ['src/__tests__/setup.ts'],
+      include: ['src/__tests__/**/*.test.tsx'],
     },
   });

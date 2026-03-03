@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AlertCircle, Calculator } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -59,7 +59,7 @@ const ManualTransactionEntry = ({
     return isValid;
   };
 
-  const buildGeneratedData = () => {
+  const buildGeneratedData = useCallback(() => {
     const avgTicket = parseFloat(averageTicketSize);
     const numTransactions = parseInt(monthlyTransactions, 10);
     const today = new Date().toISOString().split('T')[0];
@@ -72,7 +72,7 @@ const ManualTransactionEntry = ({
       transaction_type: 'Sale',
       card_type: 'Unknown'
     }));
-  };
+  }, [averageTicketSize, monthlyTransactions]);
 
   const handleProceed = () => {
     if (validateFields()) {
@@ -110,7 +110,7 @@ const ManualTransactionEntry = ({
 
     lastAutoConfirmedRef.current = signature;
     onValidDataConfirmed(buildGeneratedData());
-  }, [averageTicketSize, monthlyTransactions, autoConfirm, onValidDataConfirmed]);
+  }, [averageTicketSize, monthlyTransactions, autoConfirm, onValidDataConfirmed, buildGeneratedData]);
 
   const handleAverageTicketSizeChange = (e) => {
     const value = e.target.value;
