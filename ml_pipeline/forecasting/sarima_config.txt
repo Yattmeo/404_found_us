@@ -1,0 +1,7 @@
+# ── CONFIG ──────────────────────────────────────────────────────────────────
+SEASONAL_PERIOD   = 52          # annual weekly seasonality
+DEFAULT_ORDER     = (1, 1, 1)   # (p, d, q) — non-seasonal
+DEFAULT_S_ORDER   = (1, 1, 1, SEASONAL_PERIOD)  # (P, D, Q, s) — seasonal
+N_FORECAST_WEEKS  = 8
+WARM_MAXITER      = 50          # cold-start refit — intentionally limited
+FULL_MAXITER      = 200         # full training fit
