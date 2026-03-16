@@ -12,6 +12,7 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
   const formatCurrency = (value: number) => {
     return `$${value.toFixed(2)}`;
   };
+  const formatPct = (value: number) => `${value.toFixed(2)}%`;
 
   const acceptedBrands = quoteResult.quote_summary.payment_brands_accepted;
   const hasWaiverLine = quoteResult.other_monthly_charges.some((charge) => /waiver/i.test(charge.name));
@@ -113,6 +114,30 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
                 ))}
               </div>
             </div>
+
+            {quoteResult.ml_insights && (
+              <div>
+                <p className="text-sm text-gray-500 mb-2">ML service insights</p>
+                <div className="space-y-2 text-sm text-gray-700">
+                  <p>Neighbors used: {quoteResult.ml_insights.knn_neighbor_count}</p>
+                  <p>Reference month: {quoteResult.ml_insights.knn_end_month}</p>
+                  {quoteResult.ml_insights.cost_forecast_week_1 && (
+                    <p>
+                      Cost forecast (week 1): {formatPct(quoteResult.ml_insights.cost_forecast_week_1.mid)}
+                      {' '}
+                      ({formatPct(quoteResult.ml_insights.cost_forecast_week_1.lower)} - {formatPct(quoteResult.ml_insights.cost_forecast_week_1.upper)})
+                    </p>
+                  )}
+                  {quoteResult.ml_insights.volume_forecast_week_1 && (
+                    <p>
+                      Volume forecast (week 1): {formatCurrency(quoteResult.ml_insights.volume_forecast_week_1.mid)}
+                      {' '}
+                      ({formatCurrency(quoteResult.ml_insights.volume_forecast_week_1.lower)} - {formatCurrency(quoteResult.ml_insights.volume_forecast_week_1.upper)})
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

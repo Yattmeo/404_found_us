@@ -27,6 +27,20 @@ export interface QuoteResult {
     monthly_transactions: number;
     quote_date: string;
   };
+  ml_insights?: {
+    knn_neighbor_count: number;
+    knn_end_month: string;
+    cost_forecast_week_1?: {
+      mid: number;
+      lower: number;
+      upper: number;
+    } | null;
+    volume_forecast_week_1?: {
+      mid: number;
+      lower: number;
+      upper: number;
+    } | null;
+  } | null;
 }
 
 export default function App() {

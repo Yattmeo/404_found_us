@@ -11,8 +11,7 @@ only rows that do not already exist (based on primary key conflicts).
 ── WHAT IT DOES ──────────────────────────────────────────────────────────────
 1. Reads `transactions` and `cost_type_ref` tables from the SQLite file.
 2. Writes them to PostgreSQL as `knn_transactions` and `knn_cost_type_ref`.
-3. On subsequent runs rows are appended; duplicate rows (same id) are skipped
-   via INSERT … ON CONFLICT DO NOTHING.
+3. Keeps schema aligned with production KNN requirements.
 """
 from __future__ import annotations
 
@@ -54,15 +53,48 @@ def migrate() -> None:
     print(f"  transactions rows  : {len(transactions)}")
     print(f"  cost_type_ref rows : {len(cost_type_ref)}")
 
-    # Normalise column names to lowercase for PostgreSQL
+    # Normalise column names to lowercase for PostgreSQL.
     transactions.columns = [c.lower() for c in transactions.columns]
     cost_type_ref.columns = [c.lower() for c in cost_type_ref.columns]
 
-    # Add surrogate id if original tables have none
+    # Source columns are lower-cased above, so COST_TYPE_ID becomes cost_type_id.
+    if "cost_type_id" not in transactions.columns:
+        raise ValueError("transactions table is missing required cost_type_id/cost_type_ID column")
+
+    if "cost_type_id" not in cost_type_ref.columns:
+        raise ValueError("cost_type_ref table is missing required cost_type_id/cost_type_ID column")
+
+    # Add defaults for columns consumed by production KNN logic.
+    required_txn_columns = [
+        "transaction_id",
+        "date",
+        "amount",
+        "merchant_id",
+        "mcc",
+        "card_brand",
+        "card_type",
+        "cost_type_id",
+        "proc_cost",
+    ]
+    for col in required_txn_columns:
+        if col not in transactions.columns:
+            transactions[col] = None
+
+    # Add surrogate id if original tables have none.
     if "id" not in transactions.columns:
         transactions.insert(0, "id", range(1, len(transactions) + 1))
     if "id" not in cost_type_ref.columns:
         cost_type_ref.insert(0, "id", range(1, len(cost_type_ref) + 1))
+
+    transactions = transactions[["id", *required_txn_columns]].copy()
+    cost_type_ref = cost_type_ref[["id", "cost_type_id"]].copy()
+
+    # Convert numerics where applicable.
+    transactions["amount"] = pd.to_numeric(transactions["amount"], errors="coerce")
+    transactions["proc_cost"] = pd.to_numeric(transactions["proc_cost"], errors="coerce")
+    transactions["mcc"] = pd.to_numeric(transactions["mcc"], errors="coerce")
+    transactions["cost_type_id"] = pd.to_numeric(transactions["cost_type_id"], errors="coerce")
+    cost_type_ref["cost_type_id"] = pd.to_numeric(cost_type_ref["cost_type_id"], errors="coerce")
 
     pg_engine = create_engine(MLConfig.DATABASE_URL, pool_pre_ping=True)
 
@@ -71,12 +103,15 @@ def migrate() -> None:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS knn_transactions (
                 id          SERIAL PRIMARY KEY,
+                transaction_id TEXT,
                 merchant_id TEXT,
+                mcc         INTEGER,
+                card_brand  TEXT,
+                card_type   TEXT,
                 date        TEXT    NOT NULL,
                 amount      DOUBLE PRECISION,
                 proc_cost   DOUBLE PRECISION,
-                cost_type_id INTEGER,
-                card_type   TEXT
+                cost_type_id INTEGER
             )
         """))
         conn.execute(text("""
@@ -89,8 +124,7 @@ def migrate() -> None:
     print("PostgreSQL tables created / verified.")
 
     # ── Bulk insert via pandas (replace strategy) ─────────────────────────────
-    # Using if_exists='replace' for a clean load on first run.
-    # Change to 'append' if you want to add new rows without wiping the table.
+    # Use replace to guarantee schema consistency across upgrades.
     transactions.to_sql(
         "knn_transactions", pg_engine,
         if_exists="replace", index=False, method="multi", chunksize=500,

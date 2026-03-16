@@ -18,6 +18,19 @@ class QuoteSummary(BaseModel):
     quote_date: str
 
 
+class MLForecastBand(BaseModel):
+    mid: float
+    lower: float
+    upper: float
+
+
+class MerchantQuoteInsights(BaseModel):
+    knn_neighbor_count: int
+    knn_end_month: str
+    cost_forecast_week_1: MLForecastBand | None = None
+    volume_forecast_week_1: MLForecastBand | None = None
+
+
 class MerchantQuoteRequest(BaseModel):
     business_name: str = Field(..., min_length=1)
     industry: str = Field(..., min_length=1)
@@ -32,3 +45,4 @@ class MerchantQuoteResponse(BaseModel):
     other_potential_transaction_charges: list[QuoteChargeItem]
     other_monthly_charges: list[QuoteChargeItem]
     quote_summary: QuoteSummary
+    ml_insights: MerchantQuoteInsights | None = None

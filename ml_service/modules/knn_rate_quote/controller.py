@@ -16,17 +16,23 @@ from datetime import date
 
 import pandas as pd
 
-from .schemas import KNNRateQuoteResult
-from .service import KNNRateQuoteService
+from .schemas import (
+    CompositeMerchantRequest,
+    CompositeMerchantResponse,
+    KNNRateQuoteResult,
+    QuoteRequest,
+    QuoteResponse,
+)
+from .service import ProductionQuoteService
 
-_service: Optional[KNNRateQuoteService] = None
+_service: Optional[ProductionQuoteService] = None
 
 
-def _get_service() -> KNNRateQuoteService:
+def _get_service() -> ProductionQuoteService:
     global _service
     if _service is None:
         from database import engine  # imported here to avoid circular imports
-        _service = KNNRateQuoteService(engine=engine)
+        _service = ProductionQuoteService(engine=engine)
     return _service
 
 
@@ -53,7 +59,7 @@ def run_knn_rate_quote(
     """
     svc = _get_service()
     ts = pd.Timestamp(as_of_date) if as_of_date is not None else None
-    result: KNNRateQuoteResult = svc.quote(
+    result: KNNRateQuoteResult = svc.quote_legacy(
         df=df,
         mcc=mcc,
         card_type=card_type,
@@ -62,3 +68,30 @@ def run_knn_rate_quote(
         as_of_date=ts,
     )
     return result.model_dump()
+
+
+def run_get_quote(payload: QuoteRequest) -> dict[str, Any]:
+    svc = _get_service()
+    result = svc.get_quote(payload)
+    response = QuoteResponse(
+        neighbor_forecasts=result.neighbor_forecasts,
+        context_len_wk=result.context_len_wk,
+        horizon_len_wk=result.horizon_len_wk,
+        k=result.k,
+        end_month=result.end_month,
+    )
+    return response.model_dump()
+
+
+def run_get_composite_merchant(payload: CompositeMerchantRequest) -> dict[str, Any]:
+    svc = _get_service()
+    result = svc.get_composite_merchant(payload)
+    response = CompositeMerchantResponse(
+        composite_merchant_id=result.composite_merchant_id,
+        matched_neighbor_merchant_ids=result.matched_neighbor_merchant_ids,
+        k=result.k,
+        matching_start_month=result.matching_start_month,
+        matching_end_month=result.matching_end_month,
+        weekly_features=result.weekly_features,
+    )
+    return response.model_dump()

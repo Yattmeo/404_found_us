@@ -3,11 +3,18 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from .schemas import MerchantQuoteRequest, MerchantQuoteResponse, QuoteChargeItem, QuoteSummary
+from .schemas import (
+    MLForecastBand,
+    MerchantQuoteInsights,
+    MerchantQuoteRequest,
+    MerchantQuoteResponse,
+    QuoteChargeItem,
+    QuoteSummary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,57 @@ class MerchantQuoteService:
         return "both"
 
     @staticmethod
+    def _card_types_from_brands(brands: list[str]) -> list[str]:
+        # The production KNN service supports both card-brand and card-type filters.
+        # Keep a permissive fallback to avoid empty pools with sparse historical data.
+        card_type = MerchantQuoteService._card_type_from_brands(brands)
+        return [card_type] if card_type != "both" else ["both"]
+
+    @staticmethod
+    def _build_onboarding_rows(
+        avg_ticket: float,
+        monthly_txn_count: int,
+        brands: list[str],
+        effective_rate_pct: float,
+    ) -> list[dict]:
+        rows: list[dict] = []
+        today = datetime.now(timezone.utc).date()
+        safe_rate = max(effective_rate_pct / 100.0, 0.005)
+        card_type = MerchantQuoteService._card_type_from_brands(brands)
+        for week_idx in range(8):
+            day = today - timedelta(days=(7 * (7 - week_idx)))
+            rows.append(
+                {
+                    "transaction_date": day.isoformat(),
+                    "amount": round(avg_ticket, 2),
+                    "proc_cost": round(avg_ticket * safe_rate, 4),
+                    "cost_type_ID": 1,
+                    "card_type": card_type,
+                    "monthly_txn_count": monthly_txn_count,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _extract_rate_bounds_from_forecast(quote_payload: dict) -> tuple[float, float] | None:
+        forecast = quote_payload.get("forecast_proc_cost", [])
+        if not forecast:
+            return None
+
+        all_values_pct: list[float] = []
+        for value in forecast:
+            try:
+                all_values_pct.append(float(value) * 100.0)
+            except (TypeError, ValueError):
+                continue
+        if not all_values_pct:
+            return None
+
+        low_pct = min(all_values_pct) + 0.30
+        high_pct = max(all_values_pct) + 0.30
+        return round(low_pct, 1), round(high_pct, 1)
+
+    @staticmethod
     def _rates_from_knn(
         avg_ticket: float,
         monthly_txn_count: int,
@@ -57,7 +115,7 @@ class MerchantQuoteService:
         if avg_ticket <= 0:
             return None
 
-        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         try:
             with httpx.Client(timeout=15.0) as client:
@@ -74,19 +132,82 @@ class MerchantQuoteService:
             response.raise_for_status()
             result = response.json()
         except Exception as exc:
-            logger.warning("KNN rate-quote call failed: %s", exc)
+            logger.warning("KNN knn-rate-quote call failed: %s", exc)
+            return None
+        return MerchantQuoteService._extract_rate_bounds_from_forecast(result)
+
+    @staticmethod
+    def _fetch_ml_insights(
+        mcc: int,
+        card_types: list[str],
+        onboarding_rows: list[dict],
+    ) -> MerchantQuoteInsights | None:
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                composite_resp = client.post(
+                    f"{_ML_SERVICE_URL}/ml/getCompositeMerchant",
+                    json={
+                        "onboarding_merchant_txn_df": onboarding_rows,
+                        "mcc": mcc,
+                        "card_types": card_types,
+                    },
+                )
+                composite_resp.raise_for_status()
+                composite_payload = composite_resp.json()
+
+                weekly_features = composite_payload.get("weekly_features", [])
+                if not weekly_features:
+                    return None
+
+                cost_resp = client.post(
+                    f"{_ML_SERVICE_URL}/ml/GetCostForecast",
+                    json={
+                        "composite_weekly_features": weekly_features,
+                        "onboarding_merchant_txn_df": onboarding_rows,
+                        "mcc": mcc,
+                    },
+                )
+                cost_resp.raise_for_status()
+                cost_payload = cost_resp.json()
+
+                volume_resp = client.post(
+                    f"{_ML_SERVICE_URL}/ml/GetVolumeForecast",
+                    json={
+                        "composite_weekly_features": weekly_features,
+                        "onboarding_merchant_txn_df": onboarding_rows,
+                        "mcc": mcc,
+                    },
+                )
+                volume_resp.raise_for_status()
+                volume_payload = volume_resp.json()
+        except Exception as exc:
+            logger.warning("ML insights pipeline failed: %s", exc)
             return None
 
-        forecast: list[float] = result.get("forecast_proc_cost", [])
-        if not forecast:
-            logger.warning("KNN returned empty forecast_proc_cost")
-            return None
+        cost_week1 = None
+        if cost_payload.get("forecast"):
+            first = cost_payload["forecast"][0]
+            cost_week1 = MLForecastBand(
+                mid=float(first.get("proc_cost_pct_mid", 0.0)),
+                lower=float(first.get("proc_cost_pct_ci_lower", 0.0)),
+                upper=float(first.get("proc_cost_pct_ci_upper", 0.0)),
+            )
 
-        # Compute rate: proc_cost / avg_ticket → percentage, then add 30 bps
-        low_pct  = (min(forecast) / avg_ticket) * 100 + 0.30
-        high_pct = (max(forecast) / avg_ticket) * 100 + 0.30
+        volume_week1 = None
+        if volume_payload.get("forecast"):
+            first = volume_payload["forecast"][0]
+            volume_week1 = MLForecastBand(
+                mid=float(first.get("total_proc_value_mid", 0.0)),
+                lower=float(first.get("total_proc_value_ci_lower", 0.0)),
+                upper=float(first.get("total_proc_value_ci_upper", 0.0)),
+            )
 
-        return round(low_pct, 1), round(high_pct, 1)
+        return MerchantQuoteInsights(
+            knn_neighbor_count=int(composite_payload.get("k", 0)),
+            knn_end_month=str(composite_payload.get("matching_end_month", "")),
+            cost_forecast_week_1=cost_week1,
+            volume_forecast_week_1=volume_week1,
+        )
 
     @staticmethod
     def _placeholder_rates(monthly_volume: float) -> tuple[float, float]:
@@ -109,6 +230,7 @@ class MerchantQuoteService:
 
         mcc      = MerchantQuoteService._extract_mcc(payload.industry)
         card_type = MerchantQuoteService._card_type_from_brands(payload.payment_brands_accepted)
+        card_types = MerchantQuoteService._card_types_from_brands(payload.payment_brands_accepted)
 
         # Try KNN-backed rates; fall back to placeholder if unavailable
         knn_rates = None
@@ -142,8 +264,22 @@ class MerchantQuoteService:
             industry=payload.industry,
             average_ticket_size=round(avg_ticket, 2),
             monthly_transactions=monthly_txns,
-            quote_date=datetime.utcnow().strftime("%a, %d %b %Y"),
+            quote_date=datetime.now(timezone.utc).strftime("%a, %d %b %Y"),
         )
+
+        ml_insights = None
+        if mcc is not None:
+            onboarding_rows = MerchantQuoteService._build_onboarding_rows(
+                avg_ticket=avg_ticket,
+                monthly_txn_count=monthly_txns,
+                brands=payload.payment_brands_accepted,
+                effective_rate_pct=max(in_person_lower, 0.1),
+            )
+            ml_insights = MerchantQuoteService._fetch_ml_insights(
+                mcc=mcc,
+                card_types=card_types,
+                onboarding_rows=onboarding_rows,
+            )
 
         return MerchantQuoteResponse(
             in_person_rate_range=MerchantQuoteService._format_rate_range(in_person_lower, in_person_upper),
@@ -151,51 +287,5 @@ class MerchantQuoteService:
             other_potential_transaction_charges=potential_charges,
             other_monthly_charges=monthly_charges,
             quote_summary=quote_summary,
-        )
-
-        monthly_volume = payload.average_transaction_value * payload.monthly_transactions
-
-        base_rate = 2.5
-        if monthly_volume > 100000:
-            base_rate -= 0.3
-        elif monthly_volume > 50000:
-            base_rate -= 0.2
-        elif monthly_volume > 10000:
-            base_rate -= 0.1
-
-        base_rate = max(base_rate, 1.5)
-
-        in_person_lower = max(1.5, base_rate - 0.1)
-        in_person_upper = base_rate + 0.1
-        online_lower = in_person_lower + 0.2
-        online_upper = in_person_upper + 0.2
-
-        potential_charges = [
-            QuoteChargeItem(name="Chargeback Fee", value=25.0),
-            QuoteChargeItem(name="Refund Processing Fee", value=0.5),
-        ]
-
-        monthly_charges = [
-            QuoteChargeItem(name="Point-of-sale terminal (per terminal)", value=25.0),
-            QuoteChargeItem(name="Gateway Charge", value=16.0),
-        ]
-
-        if payload.monthly_transactions >= 1000:
-            monthly_charges.append(QuoteChargeItem(name="Gateway Charge Waiver", value=-16.0))
-
-        quote_summary = QuoteSummary(
-            payment_brands_accepted=payload.payment_brands_accepted,
-            business_name=payload.business_name,
-            industry=payload.industry,
-            average_ticket_size=round(payload.average_transaction_value, 2),
-            monthly_transactions=payload.monthly_transactions,
-            quote_date=datetime.utcnow().strftime("%a, %d %b %Y"),
-        )
-
-        return MerchantQuoteResponse(
-            in_person_rate_range=MerchantQuoteService._format_rate_range(in_person_lower, in_person_upper),
-            online_rate_range=MerchantQuoteService._format_rate_range(online_lower, online_upper),
-            other_potential_transaction_charges=potential_charges,
-            other_monthly_charges=monthly_charges,
-            quote_summary=quote_summary,
+            ml_insights=ml_insights,
         )

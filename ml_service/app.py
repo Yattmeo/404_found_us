@@ -8,6 +8,10 @@ Individual engine endpoints (for direct testing / future use):
   POST /ml/rate-optimisation
   POST /ml/tpv-prediction
   POST /ml/knn-rate-quote
+  POST /ml/getQuote
+  POST /ml/getCompositeMerchant
+  POST /ml/GetCostForecast
+  POST /ml/GetVolumeForecast
 """
 from __future__ import annotations
 

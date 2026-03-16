@@ -1,398 +1,542 @@
-"""
-KNN Rate Quote Service — PostgreSQL-backed version.
-
-Adapted from KNN Demo Service / knn_rate_quote_service.py.
-All KNN logic is identical; SQLite I/O replaced with SQLAlchemy engine queries.
-
-── HOW IT WORKS ──────────────────────────────────────────────────────────────
-1. On first request the service reads transactions + cost_type_ref from
-   PostgreSQL tables knn_transactions and knn_cost_type_ref (populated once by
-   migrate_sqlite_to_postgres.py).
-2. Monthly feature vectors (pct_ct_* + total_transactions + avg_amount) are
-   built from the raw rows.
-3. A sliding-window pool of (context → target) pairs is built per calendar month.
-4. At inference time the query merchant's features are computed, then the k
-   nearest historical neighbours are found with sklearn NearestNeighbors
-   (Euclidean distance).  The mean of the neighbours' target proc_cost values
-   for horizon months t+1…t+H is returned as the forecast.
-
-── WHERE TO EDIT ─────────────────────────────────────────────────────────────
-• k, context_len, horizon_len — __init__ defaults
-• card_type filtering         — _build_monthly_features
-• feature columns             — feature_cols derived from pct_ct_* columns
-"""
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import List
 
-import numpy as np
 import pandas as pd
 from sklearn.neighbors import NearestNeighbors
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .schemas import KNNRateQuoteResult
+from .feature_engineering import (
+    build_monthly_features,
+    build_pool_by_month,
+    lookup_horizon_proc_cost_pct,
+    query_vector_from_pool_means,
+    query_vector_from_txn_df,
+)
+from .processing_costs import ProcessingCostProvider, default_processing_cost_provider
+from .schemas import (
+    CompositeMerchantComputationResult,
+    CompositeMerchantRequest,
+    CompositeWeeklyFeature,
+    KNNRateQuoteResult,
+    NeighborForecast,
+    QuoteComputationResult,
+    QuoteRequest,
+)
 
 
-class KNNRateQuoteService:
+class PostgresMerchantRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def load_transactions(self, mcc: int, card_types: list[str]) -> pd.DataFrame:
+        query = """
+            SELECT
+                COALESCE(CAST(transaction_id AS TEXT), CAST(id AS TEXT), '') AS transaction_id,
+                date,
+                amount,
+                merchant_id,
+                mcc,
+                card_brand,
+                card_type,
+                COALESCE(cost_type_id, cost_type_ID) AS cost_type_ID,
+                proc_cost
+            FROM knn_transactions
+            WHERE CAST(COALESCE(mcc, 0) AS INTEGER) = :mcc
+        """
+        bind: dict = {"mcc": int(mcc)}
+
+        normalized = [c.lower() for c in card_types if c and c.lower() != "both"]
+        if normalized:
+            placeholders = ", ".join([f":ct{i}" for i in range(len(normalized))])
+            query += f"""
+                AND (
+                    LOWER(COALESCE(card_brand, '')) IN ({placeholders})
+                    OR LOWER(COALESCE(card_type, '')) IN ({placeholders})
+                )
+            """
+            for i, val in enumerate(normalized):
+                bind[f"ct{i}"] = val
+
+        with self.engine.connect() as conn:
+            filtered = pd.read_sql(text(query), conn, params=bind)
+            if not filtered.empty:
+                return filtered
+
+            # Fallback for datasets without MCC coverage.
+            fallback_query = """
+                SELECT
+                    COALESCE(CAST(transaction_id AS TEXT), CAST(id AS TEXT), '') AS transaction_id,
+                    date,
+                    amount,
+                    merchant_id,
+                    mcc,
+                    card_brand,
+                    card_type,
+                    cost_type_id AS cost_type_ID,
+                    proc_cost
+                FROM knn_transactions
+            """
+            return pd.read_sql(text(fallback_query), conn)
+
+    def load_cost_type_ids(self) -> List[str]:
+        with self.engine.connect() as conn:
+            ref = pd.read_sql(text("SELECT cost_type_id FROM knn_cost_type_ref"), conn)
+        return ref["cost_type_id"].dropna().astype(int).astype(str).tolist()
+
+
+class ProductionQuoteService:
     def __init__(
         self,
         engine: Engine,
-        k: int = 50,
-        context_len: int = 1,
-        horizon_len: int = 3,
-        year_min: int = 2017,
-        year_max: int = 2019,
+        processing_cost_provider: ProcessingCostProvider | None = None,
+        k: int = 5,
+        context_len_months: int = 1,
+        horizon_len_months: int = 3,
     ) -> None:
-        self.engine = engine
+        self.repository = PostgresMerchantRepository(engine)
+        self.processing_cost_provider = processing_cost_provider or default_processing_cost_provider()
         self.k = k
-        self.context_len = context_len
-        self.horizon_len = horizon_len
-        self.year_min = year_min
-        self.year_max = year_max
+        self.context_len_months = context_len_months
+        self.horizon_len_months = horizon_len_months
 
-        self.cost_type_ids = self._load_cost_type_ids()
-        self.all_monthly = self._load_monthly_reference()
-        self.feature_cols = [
-            c for c in self.all_monthly.columns if c.startswith("pct_ct_")
-        ] + ["total_transactions", "avg_amount"]
-        self.pool_cache: Dict[Tuple[int, str], pd.DataFrame] = {}
-        self.pool_means_cache: Dict[Tuple[int, str], pd.Series] = {}
+    @property
+    def context_len_wk(self) -> int:
+        return self.context_len_months * 4
 
-    # ── Data loading ──────────────────────────────────────────────────────────
+    @property
+    def horizon_len_wk(self) -> int:
+        return self.horizon_len_months * 4
 
-    def _load_cost_type_ids(self) -> List[str]:
-        cost_type_ref = pd.read_sql(
-            "SELECT cost_type_id FROM knn_cost_type_ref", self.engine
-        )
-        return (
-            cost_type_ref["cost_type_id"].dropna().astype(int).astype(str).tolist()
-        )
+    def _resolve_end_period(self, req: QuoteRequest, onboarding_df: pd.DataFrame | None) -> pd.Period:
+        if req.as_of_date is not None:
+            return pd.to_datetime(req.as_of_date).to_period("M")
 
-    def _load_monthly_reference(self) -> pd.DataFrame:
-        all_df = pd.read_sql("SELECT * FROM knn_transactions", self.engine)
-        # Normalise column name used everywhere in the algo
-        if "cost_type_id" in all_df.columns and "cost_type_ID" not in all_df.columns:
-            all_df = all_df.rename(columns={"cost_type_id": "cost_type_ID"})
-        monthly = self._build_monthly_features(all_df, card_type=None)
-        monthly = monthly[monthly["year"].between(self.year_min, self.year_max)].copy()
-        return monthly
+        if onboarding_df is not None and not onboarding_df.empty:
+            if "transaction_date" in onboarding_df.columns:
+                dt = pd.to_datetime(onboarding_df["transaction_date"], errors="coerce")
+            else:
+                dt = pd.to_datetime(onboarding_df.get("date"), errors="coerce")
+            dt = dt.dropna()
+            if not dt.empty:
+                return dt.max().to_period("M")
 
-    # ── Feature engineering ──────────────────────────────────────────────────
+        raise ValueError("as_of_date is required when onboarding_merchant_txn_df is not provided.")
 
-    def _build_monthly_features(
-        self, df: pd.DataFrame, card_type: Optional[str] = None
+    def _filter_reference_by_card_types(
+        self,
+        reference_txn: pd.DataFrame,
+        card_types: list[str],
     ) -> pd.DataFrame:
-        df = df.copy()
+        normalized = [c.strip().lower() for c in card_types if c.strip() and c.lower() != "both"]
+        if not normalized:
+            return reference_txn
 
-        if card_type and card_type.lower() != "both":
-            card_type_normalized = card_type.lower()
-            if "card_type" in df.columns:
-                df = df[df["card_type"].astype(str).str.lower() == card_type_normalized]
-                if df.empty:
-                    raise ValueError(f"No transactions found for card_type: {card_type}")
+        brand = reference_txn.get("card_brand", pd.Series(dtype=str)).astype(str).str.lower()
+        ctype = reference_txn.get("card_type", pd.Series(dtype=str)).astype(str).str.lower()
+        mask = brand.isin(normalized) | ctype.isin(normalized)
+        return reference_txn[mask].copy()
 
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = df.dropna(subset=["date"])
-        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-        df["proc_cost"] = pd.to_numeric(df["proc_cost"], errors="coerce")
-        df["year"] = df["date"].dt.year
-        df["month_num"] = df["date"].dt.month
-        df["ym"] = df["date"].dt.to_period("M").astype(str)
-        df["cost_type_ID"] = df["cost_type_ID"].fillna(-1).astype(int).astype(str)
+    def _build_window_pool(
+        self,
+        monthly_ref: pd.DataFrame,
+        feature_cols: List[str],
+        start_period: pd.Period,
+        end_period: pd.Period,
+    ) -> pd.DataFrame:
+        periods = pd.period_range(start_period, end_period, freq="M")
+        ctx = monthly_ref[monthly_ref["ym_period"].isin(periods)].copy()
+        if ctx.empty:
+            return pd.DataFrame()
+
+        eligible_merchants = (
+            ctx.groupby("merchant_id")["ym_period"]
+            .nunique()
+            .loc[lambda s: s == len(periods)]
+            .index
+        )
+        if len(eligible_merchants) == 0:
+            return pd.DataFrame()
+
+        return (
+            ctx[ctx["merchant_id"].isin(eligible_merchants)]
+            .groupby("merchant_id")[feature_cols]
+            .mean()
+            .reset_index()
+        )
+
+    def _build_window_query_vector(
+        self,
+        onboarding_df: pd.DataFrame,
+        cost_type_ids: List[str],
+        feature_cols: List[str],
+        start_period: pd.Period,
+        end_period: pd.Period,
+    ) -> pd.DataFrame:
+        tx = onboarding_df.copy()
+        if "transaction_date" in tx.columns and "date" not in tx.columns:
+            tx = tx.rename(columns={"transaction_date": "date"})
+
+        tx["date"] = pd.to_datetime(tx["date"], errors="coerce")
+        tx = tx.dropna(subset=["date"])
+        if tx.empty:
+            raise ValueError("onboarding_merchant_txn_df has no valid dates.")
+
+        tx["ym_period"] = tx["date"].dt.to_period("M")
+        periods = pd.period_range(start_period, end_period, freq="M")
+        tx = tx[tx["ym_period"].isin(periods)].copy()
+        if tx.empty:
+            raise ValueError("No onboarding transactions in matching window.")
+
+        tx["amount"] = pd.to_numeric(tx.get("amount"), errors="coerce")
+        tx["cost_type_ID"] = tx.get("cost_type_ID").fillna(-1).astype(int).astype(str)
 
         counts = (
-            df.groupby(["merchant_id", "year", "month_num", "ym", "cost_type_ID"])
+            tx.groupby(["ym_period", "cost_type_ID"])
             .size()
             .rename("count")
             .reset_index()
         )
+
         cost_counts = counts.pivot_table(
-            index=["merchant_id", "year", "month_num", "ym"],
+            index=["ym_period"],
             columns="cost_type_ID",
             values="count",
             fill_value=0,
         )
-        cost_counts = cost_counts.reindex(columns=self.cost_type_ids, fill_value=0)
-        total_transactions = cost_counts.sum(axis=1).rename("total_transactions")
-        cost_pct = cost_counts.div(total_transactions, axis=0).fillna(0)
-        cost_pct.columns = [f"pct_ct_{c}" for c in cost_pct.columns]
-        avg_amount = (
-            df.groupby(["merchant_id", "year", "month_num", "ym"])["amount"]
-            .mean()
-            .rename("avg_amount")
-        )
-        target_proc_cost = (
-            df.groupby(["merchant_id", "year", "month_num", "ym"])["proc_cost"]
-            .mean()
-            .rename("target_proc_cost")
-        )
-        features = pd.concat(
-            [cost_pct, total_transactions, avg_amount, target_proc_cost], axis=1
-        ).reset_index()
-        features["ym_period"] = pd.PeriodIndex(features["ym"], freq="M")
-        features = features.sort_values(["merchant_id", "year", "ym_period"])
-        features["month_index"] = (
-            features.groupby(["merchant_id", "year"]).cumcount() + 1
-        )
-        return features
+        cost_counts = cost_counts.reindex(columns=cost_type_ids, fill_value=0)
+        monthly_total = cost_counts.sum(axis=1).rename("total_transactions")
+        monthly_pct = cost_counts.div(monthly_total, axis=0).fillna(0.0)
+        monthly_pct.columns = [f"pct_ct_{c}" for c in monthly_pct.columns]
 
-    # ── Pool building ─────────────────────────────────────────────────────────
+        monthly_avg_amount = tx.groupby("ym_period")["amount"].mean().rename("avg_amount")
+        monthly_features = pd.concat([monthly_pct, monthly_total, monthly_avg_amount], axis=1)
 
-    def _build_pool_by_month(
-        self, monthly_data: pd.DataFrame, card_type: str = "both"
-    ) -> Tuple[Dict[int, pd.DataFrame], Dict[int, pd.Series]]:
-        pool_by_month: Dict[int, list] = {}
-        pool_means_by_month: Dict[int, pd.Series] = {}
+        query_row = monthly_features.mean(axis=0).to_frame().T
+        query_row = query_row.reindex(columns=feature_cols, fill_value=0.0).fillna(0.0)
+        return query_row.astype(float)
 
-        all_periods = sorted(monthly_data["ym_period"].unique())
-        if not all_periods:
-            return {}, {}
-
-        min_period = all_periods[0]
-        max_period = all_periods[-1]
-
-        for end_period in all_periods:
-            start_context = end_period - (self.context_len - 1)
-            end_target = end_period + self.horizon_len
-            if start_context < min_period or end_target > max_period:
-                continue
-
-            context_periods = pd.period_range(start_context, end_period, freq="M")
-            target_periods = pd.period_range(
-                end_period + 1, end_period + self.horizon_len, freq="M"
-            )
-
-            ctx_df = monthly_data[monthly_data["ym_period"].isin(context_periods)]
-            target_df = monthly_data[monthly_data["ym_period"].isin(target_periods)]
-            ctx_agg = ctx_df.groupby("merchant_id")[self.feature_cols].mean()
-            targets = (
-                target_df.pivot_table(
-                    index="merchant_id",
-                    columns="ym_period",
-                    values="target_proc_cost",
-                )
-                .reindex(columns=target_periods)
-                .copy()
-            )
-
-            if ctx_agg.empty or targets.empty:
-                continue
-
-            targets.columns = [f"t{i}" for i in range(1, self.horizon_len + 1)]
-            merchant_cases = ctx_agg.join(targets, how="inner").dropna()
-            if merchant_cases.empty:
-                continue
-
-            merchant_cases["end_period"] = end_period
-            merchant_cases["end_month"] = end_period.month
-            pool_by_month.setdefault(end_period.month, []).append(merchant_cases)
-
-        combined = {}
-        for month_num, frames in pool_by_month.items():
-            combined[month_num] = pd.concat(frames, axis=0, ignore_index=True)
-            pool_means_by_month[month_num] = combined[month_num][self.feature_cols].mean()
-        return combined, pool_means_by_month
-
-    def _get_pool(self, month_num: int, card_type: str = "both") -> Optional[pd.DataFrame]:
-        cache_key = (month_num, card_type)
-        if cache_key in self.pool_cache:
-            return self.pool_cache[cache_key]
-
-        if card_type.lower() != "both" and "card_type" in self.all_monthly.columns:
-            filtered = self.all_monthly[
-                self.all_monthly["card_type"].astype(str).str.lower() == card_type.lower()
-            ]
-        else:
-            filtered = self.all_monthly
-
-        if filtered.empty:
-            return None
-
-        pools, _ = self._build_pool_by_month(filtered, card_type)
-        pool = pools.get(month_num)
-        if pool is not None:
-            self.pool_cache[cache_key] = pool
-        return pool
-
-    def _get_pool_means(
-        self, month_num: int, card_type: str = "both"
-    ) -> Optional[pd.Series]:
-        cache_key = (month_num, card_type)
-        if cache_key in self.pool_means_cache:
-            return self.pool_means_cache[cache_key]
-
-        if card_type.lower() != "both" and "card_type" in self.all_monthly.columns:
-            filtered = self.all_monthly[
-                self.all_monthly["card_type"].astype(str).str.lower() == card_type.lower()
-            ]
-        else:
-            filtered = self.all_monthly
-
-        if filtered.empty:
-            return None
-
-        _, pool_means = self._build_pool_by_month(filtered, card_type)
-        means = pool_means.get(month_num)
-        if means is not None:
-            self.pool_means_cache[cache_key] = means
-        return means
-
-    # ── Query feature computation ─────────────────────────────────────────────
-
-    def _compute_query_features(
+    def _build_composite_weekly_features(
         self,
-        df: Optional[pd.DataFrame],
-        monthly_txn_count: Optional[int],
-        avg_amount: Optional[float],
-        as_of_date: Optional[pd.Timestamp],
-        card_type: Optional[str] = None,
-    ) -> Tuple[np.ndarray, int]:
-        if df is None:
-            if as_of_date is None:
-                raise ValueError("as_of_date is required when df is not provided.")
-            if monthly_txn_count is None or avg_amount is None:
-                raise ValueError(
-                    "monthly_txn_count and avg_amount are required when df is not provided."
-                )
+        reference_txn: pd.DataFrame,
+        merchant_ids: List[int],
+        cost_type_ids: List[str],
+    ) -> pd.DataFrame:
+        tx = reference_txn[reference_txn["merchant_id"].isin(merchant_ids)].copy()
+        if tx.empty:
+            return pd.DataFrame()
 
-            as_of_period = pd.to_datetime(as_of_date).to_period("M")
-            max_period = self.all_monthly["ym_period"].max()
+        tx["date"] = pd.to_datetime(tx["date"], errors="coerce")
+        tx = tx.dropna(subset=["date"])
+        tx["amount"] = pd.to_numeric(tx.get("amount"), errors="coerce")
+        tx["proc_cost"] = pd.to_numeric(tx.get("proc_cost"), errors="coerce")
+        tx = tx.dropna(subset=["amount"])
+        if tx.empty:
+            return pd.DataFrame()
 
-            if as_of_period > max_period:
-                most_recent_year = max_period.year
-                end_period = pd.Period(f"{most_recent_year}-{as_of_period.month:02d}", freq="M")
-            else:
-                end_period = as_of_period
+        tx["calendar_year"] = tx["date"].dt.year
+        tx["week_of_year"] = (((tx["date"].dt.dayofyear - 1) // 7) + 1).clip(upper=52).astype(int)
 
-            pool_means = self._get_pool_means(end_period.month, card_type or "both")
-            if pool_means is None:
-                raise ValueError("No reference pool available for the requested month.")
-
-            cost_pct = pool_means[[c for c in self.feature_cols if c.startswith("pct_ct_")]]
-            cost_pct = cost_pct / max(cost_pct.sum(), 1e-12)
-            cost_pct = cost_pct.to_frame().T
-            cost_pct.columns = [f"pct_ct_{c.split('pct_ct_')[-1]}" for c in cost_pct.columns]
-
-            feature_row = pd.concat(
-                [
-                    cost_pct,
-                    pd.DataFrame(
-                        {"total_transactions": [monthly_txn_count], "avg_amount": [avg_amount]}
-                    ),
-                ],
-                axis=1,
-            )
-            feature_row = feature_row[self.feature_cols]
-            return feature_row.values.astype(float), end_period.month
-
-        required_cols = {"transaction_date", "amount", "cost_type_ID"}
-        missing = required_cols - set(df.columns)
-        if missing:
-            raise ValueError(
-                f"Missing required columns for cost_type features: {sorted(missing)}"
-            )
-
-        df = df.copy()
-        df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
-        df = df.dropna(subset=["transaction_date"])
-
-        if df.empty:
-            raise ValueError("Input df has no valid transaction_date values.")
-
-        if as_of_date is None:
-            end_period = df["transaction_date"].max().to_period("M")
-        else:
-            as_of_period = pd.to_datetime(as_of_date).to_period("M")
-            max_date = df["transaction_date"].max()
-            max_period = max_date.to_period("M")
-            if as_of_period > max_period:
-                most_recent_year = max_date.year
-                end_period = pd.Period(f"{most_recent_year}-{as_of_period.month:02d}", freq="M")
-            else:
-                end_period = as_of_period
-
-        df_month = df[df["transaction_date"].dt.to_period("M") == end_period]
-        if df_month.empty:
-            raise ValueError("No transactions found for the selected month.")
-
-        df_month["cost_type_ID"] = (
-            df_month["cost_type_ID"].fillna(-1).astype(int).astype(str)
+        weekly_cost_counts = (
+            tx.groupby(["merchant_id", "calendar_year", "week_of_year", "cost_type_ID"])
+            .size()
+            .rename("count")
+            .reset_index()
         )
-        counts = (
-            df_month.groupby(["cost_type_ID"]).size().rename("count").reset_index()
-        )
-        cost_counts = counts.pivot_table(
-            index=[],
+        weekly_cost_counts = weekly_cost_counts.pivot_table(
+            index=["merchant_id", "calendar_year", "week_of_year"],
             columns="cost_type_ID",
             values="count",
             fill_value=0,
         )
-        cost_counts = cost_counts.reindex(columns=self.cost_type_ids, fill_value=0)
+        weekly_cost_counts = weekly_cost_counts.reindex(columns=cost_type_ids, fill_value=0)
+        weekly_total_txn = weekly_cost_counts.sum(axis=1)
+        weekly_pct = weekly_cost_counts.div(weekly_total_txn, axis=0).fillna(0.0)
+        weekly_pct.columns = [f"pct_ct_{c}" for c in weekly_pct.columns]
 
-        total_txns = monthly_txn_count
-        if total_txns is None:
-            total_txns = int(cost_counts.sum(axis=1).iloc[0])
-
-        avg_amt = avg_amount
-        if avg_amt is None:
-            avg_amt = float(pd.to_numeric(df_month["amount"], errors="coerce").mean())
-        if pd.isna(avg_amt):
-            pool_means = self._get_pool_means(end_period.month, card_type or "both")
-            if pool_means is not None and "avg_amount" in pool_means:
-                avg_amt = float(pool_means["avg_amount"])
-            else:
-                avg_amt = 0.0
-
-        cost_pct = cost_counts.div(total_txns, axis=0).fillna(0)
-        cost_pct.columns = [f"pct_ct_{c}" for c in cost_pct.columns]
-        feature_row = pd.concat(
-            [
-                cost_pct,
-                pd.DataFrame({"total_transactions": [total_txns], "avg_amount": [avg_amt]}),
-            ],
-            axis=1,
+        per_merchant_week = (
+            tx.groupby(["merchant_id", "calendar_year", "week_of_year"])
+            .agg(
+                weekly_txn_count=("transaction_id", "count"),
+                weekly_total_proc_value=("amount", "sum"),
+                weekly_avg_txn_value=("amount", "mean"),
+                sum_proc_cost=("proc_cost", "sum"),
+                sum_amount=("amount", "sum"),
+            )
+            .reset_index()
         )
-        feature_row = feature_row[self.feature_cols].fillna(0.0)
-        return feature_row.values.astype(float), end_period.month
+        per_merchant_week = per_merchant_week.join(
+            weekly_pct,
+            on=["merchant_id", "calendar_year", "week_of_year"],
+        )
+        per_merchant_week["weekly_avg_txn_cost_pct"] = (
+            per_merchant_week["sum_proc_cost"] / per_merchant_week["sum_amount"]
+        ).replace([float("inf"), float("-inf")], 0.0).fillna(0.0)
 
-    # ── Public inference method ───────────────────────────────────────────────
+        pct_cols = [f"pct_ct_{c}" for c in cost_type_ids]
+        agg_map = {
+            "weekly_txn_count": ["mean", "std"],
+            "weekly_total_proc_value": ["mean", "std"],
+            "weekly_avg_txn_value": ["mean", "std"],
+            "weekly_avg_txn_cost_pct": ["mean", "std"],
+            "merchant_id": pd.Series.nunique,
+        }
+        for col in pct_cols:
+            agg_map[col] = "mean"
 
-    def quote(
-        self,
-        df: Optional[pd.DataFrame],
-        mcc: int,
-        card_type: Optional[str] = None,
-        monthly_txn_count: Optional[int] = None,
-        avg_amount: Optional[float] = None,
-        as_of_date: Optional[pd.Timestamp] = None,
-    ) -> KNNRateQuoteResult:
-        query_vec, end_month = self._compute_query_features(
-            df,
-            monthly_txn_count,
-            avg_amount,
-            as_of_date,
-            card_type=card_type,
+        composite = per_merchant_week.groupby(["calendar_year", "week_of_year"]).agg(agg_map)
+        composite.columns = [
+            "_".join(str(part) for part in col if part).rstrip("_")
+            if isinstance(col, tuple)
+            else str(col)
+            for col in composite.columns.to_flat_index()
+        ]
+        composite = composite.rename(
+            columns={
+                "weekly_txn_count_std": "weekly_txn_count_stdev",
+                "weekly_total_proc_value_std": "weekly_total_proc_value_stdev",
+                "weekly_avg_txn_value_std": "weekly_avg_txn_value_stdev",
+                "weekly_avg_txn_cost_pct_std": "weekly_avg_txn_cost_pct_stdev",
+                "merchant_id_nunique": "neighbor_coverage",
+            }
+        )
+        composite = composite.rename(
+            columns={f"{col}_mean": col for col in pct_cols if f"{col}_mean" in composite.columns}
         )
 
-        pool = self._get_pool(end_month, card_type or "both")
+        min_year = int(tx["calendar_year"].min())
+        max_year = int(tx["calendar_year"].max())
+        full_index = pd.MultiIndex.from_product(
+            [range(min_year, max_year + 1), range(1, 53)],
+            names=["calendar_year", "week_of_year"],
+        )
+        composite = composite.reindex(full_index).reset_index()
+
+        metric_cols = [
+            "weekly_txn_count_mean",
+            "weekly_txn_count_stdev",
+            "weekly_total_proc_value_mean",
+            "weekly_total_proc_value_stdev",
+            "weekly_avg_txn_value_mean",
+            "weekly_avg_txn_value_stdev",
+            "weekly_avg_txn_cost_pct_mean",
+            "weekly_avg_txn_cost_pct_stdev",
+        ]
+        composite[metric_cols] = composite[metric_cols].fillna(0.0)
+        composite[pct_cols] = composite[pct_cols].fillna(0.0)
+        composite["neighbor_coverage"] = composite["neighbor_coverage"].fillna(0).astype(int)
+        return composite.sort_values(["calendar_year", "week_of_year"])
+
+    def get_quote(self, req: QuoteRequest) -> QuoteComputationResult:
+        reference_txn = self.repository.load_transactions(req.mcc, req.card_types)
+        reference_txn = self._filter_reference_by_card_types(reference_txn, req.card_types)
+        if reference_txn.empty:
+            raise ValueError("No reference transactions available for requested mcc/card_types.")
+
+        cost_type_ids = self.repository.load_cost_type_ids()
+        monthly_ref = build_monthly_features(reference_txn, cost_type_ids)
+        if monthly_ref.empty:
+            raise ValueError("Reference monthly feature table is empty.")
+
+        feature_cols = [c for c in monthly_ref.columns if c.startswith("pct_ct_")] + [
+            "total_transactions",
+            "avg_amount",
+        ]
+        no_df_feature_cols = ["total_transactions", "avg_amount"]
+        pool_by_month = build_pool_by_month(
+            monthly_ref,
+            feature_cols,
+            self.context_len_months,
+            self.horizon_len_months,
+        )
+
+        onboarding_df = None
+        if req.onboarding_merchant_txn_df is not None:
+            onboarding_df = pd.DataFrame(req.onboarding_merchant_txn_df)
+            if onboarding_df.empty:
+                onboarding_df = None
+
+        end_period = self._resolve_end_period(req, onboarding_df)
+        pool = pool_by_month.get(end_period.month)
         if pool is None or pool.empty:
-            raise ValueError("No reference pool available for the requested month.")
+            raise ValueError("No reference pool available for selected end month.")
 
-        X_pool = pool[self.feature_cols].values
-        knn = NearestNeighbors(
-            n_neighbors=min(self.k, len(pool)), metric="euclidean"
+        if onboarding_df is not None:
+            if "proc_cost" not in onboarding_df.columns or onboarding_df["proc_cost"].isna().any():
+                onboarding_df = self.processing_cost_provider.enrich(onboarding_df)
+
+            query_vec = query_vector_from_txn_df(
+                onboarding_df=onboarding_df,
+                cost_type_ids=cost_type_ids,
+                feature_cols=feature_cols,
+                end_period=end_period,
+                avg_monthly_txn_count=req.avg_monthly_txn_count,
+                avg_monthly_txn_value=req.avg_monthly_txn_value,
+            )
+            knn_feature_cols = feature_cols
+        else:
+            if req.avg_monthly_txn_count is None or req.avg_monthly_txn_value is None:
+                raise ValueError(
+                    "avg_monthly_txn_count and avg_monthly_txn_value are required when onboarding_merchant_txn_df is missing."
+                )
+            query_vec = query_vector_from_pool_means(
+                feature_cols=no_df_feature_cols,
+                pool=pool,
+                avg_monthly_txn_count=req.avg_monthly_txn_count,
+                avg_monthly_txn_value=req.avg_monthly_txn_value,
+            )
+            knn_feature_cols = no_df_feature_cols
+
+        effective_k = min(self.k, len(pool))
+        x_pool = pool[knn_feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        x_query = query_vec.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        model = NearestNeighbors(n_neighbors=effective_k, metric="euclidean")
+        model.fit(x_pool.values)
+        _, idx = model.kneighbors(x_query.values)
+
+        neighbors = pool.iloc[idx[0]]
+        horizon_forecasts = lookup_horizon_proc_cost_pct(monthly_ref, neighbors, self.horizon_len_months)
+
+        neighbor_forecasts: List[NeighborForecast] = []
+        for (_, row), forecast in zip(neighbors.iterrows(), horizon_forecasts):
+            neighbor_forecasts.append(
+                NeighborForecast(
+                    merchant_id=int(row["merchant_id"]),
+                    forecast_proc_cost_pct_3m=forecast,
+                )
+            )
+
+        return QuoteComputationResult(
+            neighbor_forecasts=neighbor_forecasts,
+            context_len_wk=self.context_len_wk,
+            horizon_len_wk=self.horizon_len_wk,
+            k=effective_k,
+            end_month=str(end_period),
         )
-        knn.fit(X_pool)
-        _, neighbor_idx = knn.kneighbors(query_vec)
 
-        neighbors = pool.iloc[neighbor_idx[0]]
-        target_cols = [f"t{i}" for i in range(1, self.horizon_len + 1)]
-        forecast = neighbors[target_cols].mean(axis=0).values.tolist()
+    def get_composite_merchant(self, req: CompositeMerchantRequest) -> CompositeMerchantComputationResult:
+        onboarding_df = pd.DataFrame(req.onboarding_merchant_txn_df)
+        if onboarding_df.empty:
+            raise ValueError("onboarding_merchant_txn_df cannot be empty.")
 
+        if "transaction_date" in onboarding_df.columns and "date" not in onboarding_df.columns:
+            onboarding_df = onboarding_df.rename(columns={"transaction_date": "date"})
+        onboarding_df["date"] = pd.to_datetime(onboarding_df.get("date"), errors="coerce")
+        onboarding_df = onboarding_df.dropna(subset=["date"])
+        if onboarding_df.empty:
+            raise ValueError("onboarding_merchant_txn_df has no valid dates.")
+
+        start_period = onboarding_df["date"].min().to_period("M")
+        end_period = onboarding_df["date"].max().to_period("M")
+
+        reference_txn = self.repository.load_transactions(req.mcc, req.card_types)
+        reference_txn = self._filter_reference_by_card_types(reference_txn, req.card_types)
+        if reference_txn.empty:
+            raise ValueError("No reference transactions available for requested mcc/card_types.")
+
+        cost_type_ids = self.repository.load_cost_type_ids()
+        monthly_ref = build_monthly_features(reference_txn, cost_type_ids)
+        if monthly_ref.empty:
+            raise ValueError("Reference monthly feature table is empty.")
+
+        feature_cols = [c for c in monthly_ref.columns if c.startswith("pct_ct_")] + [
+            "total_transactions",
+            "avg_amount",
+        ]
+        pool = self._build_window_pool(monthly_ref, feature_cols, start_period, end_period)
+        if pool.empty:
+            raise ValueError("No reference pool available for onboarding window.")
+
+        if "proc_cost" not in onboarding_df.columns or onboarding_df["proc_cost"].isna().any():
+            onboarding_df = self.processing_cost_provider.enrich(onboarding_df)
+
+        query_vec = self._build_window_query_vector(
+            onboarding_df=onboarding_df,
+            cost_type_ids=cost_type_ids,
+            feature_cols=feature_cols,
+            start_period=start_period,
+            end_period=end_period,
+        )
+
+        effective_k = min(self.k, len(pool))
+        x_pool = pool[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        x_query = query_vec.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        model = NearestNeighbors(n_neighbors=effective_k, metric="euclidean")
+        model.fit(x_pool.values)
+        _, idx = model.kneighbors(x_query.values)
+
+        neighbors = pool.iloc[idx[0]].copy()
+        neighbor_ids = [int(v) for v in neighbors["merchant_id"].tolist()]
+        composite = self._build_composite_weekly_features(reference_txn, neighbor_ids, cost_type_ids)
+        if composite.empty:
+            raise ValueError("No composite weekly features could be generated.")
+
+        weekly_features: List[CompositeWeeklyFeature] = []
+        pct_cols = [f"pct_ct_{c}" for c in cost_type_ids]
+        for _, row in composite.iterrows():
+            weekly_features.append(
+                CompositeWeeklyFeature(
+                    calendar_year=int(row["calendar_year"]),
+                    week_of_year=int(row["week_of_year"]),
+                    weekly_txn_count_mean=float(row["weekly_txn_count_mean"]),
+                    weekly_txn_count_stdev=float(row["weekly_txn_count_stdev"]),
+                    weekly_total_proc_value_mean=float(row["weekly_total_proc_value_mean"]),
+                    weekly_total_proc_value_stdev=float(row["weekly_total_proc_value_stdev"]),
+                    weekly_avg_txn_value_mean=float(row["weekly_avg_txn_value_mean"]),
+                    weekly_avg_txn_value_stdev=float(row["weekly_avg_txn_value_stdev"]),
+                    weekly_avg_txn_cost_pct_mean=float(row["weekly_avg_txn_cost_pct_mean"]),
+                    weekly_avg_txn_cost_pct_stdev=float(row["weekly_avg_txn_cost_pct_stdev"]),
+                    neighbor_coverage=int(row["neighbor_coverage"]),
+                    pct_ct_means={col: float(row[col]) for col in pct_cols},
+                )
+            )
+
+        return CompositeMerchantComputationResult(
+            composite_merchant_id=f"composite_mcc_{req.mcc}_{start_period}_{end_period}",
+            matched_neighbor_merchant_ids=neighbor_ids,
+            k=effective_k,
+            matching_start_month=str(start_period),
+            matching_end_month=str(end_period),
+            weekly_features=weekly_features,
+        )
+
+    def quote_legacy(
+        self,
+        df: pd.DataFrame | None,
+        mcc: int,
+        card_type: str | None,
+        monthly_txn_count: int | None,
+        avg_amount: float | None,
+        as_of_date: pd.Timestamp | None,
+    ) -> KNNRateQuoteResult:
+        req = QuoteRequest(
+            onboarding_merchant_txn_df=(df.to_dict("records") if df is not None else None),
+            avg_monthly_txn_count=monthly_txn_count,
+            avg_monthly_txn_value=avg_amount,
+            mcc=mcc,
+            card_types=[card_type or "both"],
+            as_of_date=as_of_date.to_pydatetime() if as_of_date is not None else None,
+        )
+        result = self.get_quote(req)
+        neighbor_values = [
+            float(sum(n.forecast_proc_cost_pct_3m) / len(n.forecast_proc_cost_pct_3m))
+            for n in result.neighbor_forecasts
+            if n.forecast_proc_cost_pct_3m
+        ]
+        if result.neighbor_forecasts:
+            horizon_values = list(zip(*[n.forecast_proc_cost_pct_3m for n in result.neighbor_forecasts]))
+            forecast = [float(sum(vals) / len(vals)) for vals in horizon_values]
+        else:
+            forecast = []
+        note = None
+        if neighbor_values:
+            note = f"avg_neighbor_mid={sum(neighbor_values)/len(neighbor_values):.6f}"
         return KNNRateQuoteResult(
             forecast_proc_cost=forecast,
-            context_len=self.context_len,
-            horizon_len=self.horizon_len,
-            k=self.k,
-            end_month=end_month,
+            context_len=self.context_len_months,
+            horizon_len=self.horizon_len_months,
+            k=result.k,
+            end_month=int(pd.Period(result.end_month, freq="M").month),
+            notes=note,
         )

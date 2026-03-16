@@ -22,13 +22,16 @@ class KNNTransaction(Base):
     """One row per historical transaction used by the KNN Rate Quote Engine."""
     __tablename__ = "knn_transactions"
 
-    id          = Column(Integer, primary_key=True, index=True)
-    merchant_id = Column(String, nullable=True, index=True)
-    date        = Column(String, nullable=False)
-    amount      = Column(Float, nullable=True)
-    proc_cost   = Column(Float, nullable=True)
+    id           = Column(Integer, primary_key=True, index=True)
+    transaction_id = Column(String, nullable=True, index=True)
+    merchant_id  = Column(String, nullable=True, index=True)
+    mcc          = Column(Integer, nullable=True, index=True)
+    card_brand   = Column(String, nullable=True)
+    card_type    = Column(String, nullable=True)
+    date         = Column(String, nullable=False)
+    amount       = Column(Float, nullable=True)
+    proc_cost    = Column(Float, nullable=True)
     cost_type_id = Column(Integer, nullable=True)
-    card_type   = Column(String, nullable=True)
 
 
 class KNNCostTypeRef(Base):

@@ -25,9 +25,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from database import get_db
-from modules.knn_rate_quote.controller import run_knn_rate_quote
+from modules.cost_forecast.controller import run_cost_forecast
+from modules.cost_forecast.models import CostForecastRequest
+from modules.knn_rate_quote.controller import run_get_composite_merchant, run_get_quote, run_knn_rate_quote
+from modules.knn_rate_quote.schemas import CompositeMerchantRequest, QuoteRequest
 from modules.rate_optimisation.controller import run_rate_optimisation
 from modules.tpv_prediction.controller import run_tpv_prediction
+from modules.volume_forecast.controller import run_volume_forecast
+from modules.volume_forecast.models import VolumeForecastRequest
 
 router = APIRouter(prefix="/ml")
 logger = logging.getLogger(__name__)
@@ -208,3 +213,35 @@ async def knn_rate_quote_endpoint(
         avg_amount=avg_amount,
         as_of_date=_as_of_date,
     )
+
+
+@router.post("/getQuote", tags=["KNN Quote Service"])
+async def get_quote_endpoint(payload: QuoteRequest):
+    try:
+        return run_get_quote(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/getCompositeMerchant", tags=["KNN Quote Service"])
+async def get_composite_merchant_endpoint(payload: CompositeMerchantRequest):
+    try:
+        return run_get_composite_merchant(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/GetCostForecast", tags=["Cost Forecast Service"])
+async def get_cost_forecast_endpoint(payload: CostForecastRequest):
+    try:
+        return run_cost_forecast(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/GetVolumeForecast", tags=["Volume Forecast Service"])
+async def get_volume_forecast_endpoint(payload: VolumeForecastRequest):
+    try:
+        return run_volume_forecast(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
