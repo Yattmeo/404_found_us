@@ -1,0 +1,95 @@
+{
+  "generated_at_utc": "2026-03-16T11:04:53.562420+00:00",
+  "strategy_readme_path": "/Users/yattmeo/Desktop/SMU/Code/404_found_us/ml_pipeline/Matt_EDA/isolated_service_lab/README_VOLUME_FORECAST_STRATEGIES.md",
+  "metrics_payload_path": "/Users/yattmeo/Desktop/SMU/Code/404_found_us/ml_pipeline/Matt_EDA/isolated_service_lab/outputs/multi_volume/multi_merchant_volume_eval_metrics.json",
+  "tests": {
+    "missing_week_policy": {
+      "missing_week_count": 34,
+      "observed_week_count": 86,
+      "observed_zero_week_count": 0,
+      "calibrated_epsilon_fill_mae": 66.32299743396392,
+      "calibrated_zero_fill_mae": 66.32299743424724,
+      "calibrated_observed_only_mae": 74.40265680914864,
+      "raw_epsilon_fill_mae": 69.52887569964938,
+      "raw_zero_fill_mae": 69.52887569993271,
+      "raw_observed_only_mae": 75.38338614247297,
+      "weighted_active_week_mae_calibrated": 71.08224884674397,
+      "weighted_active_week_mae_raw": 72.97742294679205
+    },
+    "sparse_context_slice": [
+      {
+        "is_sparse_context": false,
+        "merchant_count": 9,
+        "mean_forecast_mae": 70.57264208741674,
+        "mean_forecast_raw_mae": 73.87169081768803,
+        "mean_improvement_vs_raw": 3.2990487302713074,
+        "median_context_active_week_ratio": 0.75
+      },
+      {
+        "is_sparse_context": true,
+        "merchant_count": 1,
+        "mean_forecast_mae": 28.076195552888468,
+        "mean_forecast_raw_mae": 30.443539637301413,
+        "mean_improvement_vs_raw": 2.367344084412945,
+        "median_context_active_week_ratio": 0.375
+      }
+    ],
+    "anomaly_slice": {
+      "observed_week_count": 86,
+      "anomaly_week_count": 14,
+      "non_anomaly_week_count": 72,
+      "anomaly_rate_observed_weeks": 0.16279069767441862,
+      "calibrated_mae_anomaly_weeks": 89.14921666548192,
+      "calibrated_mae_non_anomaly_weeks": 71.53527017041716,
+      "raw_mae_anomaly_weeks": 83.91286253220208,
+      "raw_mae_non_anomaly_weeks": 73.72487684447009,
+      "winsorized_iqr_mae_calibrated": 72.17368878589282,
+      "winsorized_iqr_mae_raw": 73.18834775591213
+    },
+    "calibration_modes": {
+      "mode_counts": {
+        "skipped_no_improvement": 4,
+        "guarded_linear": 3,
+        "guarded_scale": 2,
+        "guarded_shift": 1
+      },
+      "mean_improvement_vs_raw": 3.205878265685471,
+      "mean_improvement_vs_raw_observed_only": 1.2924019391046322
+    },
+    "confidence_interval_risk": [
+      {
+        "is_sparse_context": false,
+        "was_anomaly_any": false,
+        "week_count": 94,
+        "observed_week_count": 65,
+        "mean_ci_width": 40.63868928828443,
+        "mean_ci_width_ratio": 0.9486129633727033,
+        "mean_abs_error_cal_epsilon": 67.80591821408787
+      },
+      {
+        "is_sparse_context": false,
+        "was_anomaly_any": true,
+        "week_count": 14,
+        "observed_week_count": 14,
+        "mean_ci_width": 38.02214294499348,
+        "mean_ci_width_ratio": 1.047249150232431,
+        "mean_abs_error_cal_epsilon": 89.14921666548192
+      },
+      {
+        "is_sparse_context": true,
+        "was_anomaly_any": false,
+        "week_count": 12,
+        "observed_week_count": 7,
+        "mean_ci_width": 40.26472096837942,
+        "mean_ci_width_ratio": 0.9405583316762853,
+        "mean_abs_error_cal_epsilon": 28.076195552888475
+      }
+    ],
+    "winsorization_sensitivity": {
+      "calibrated_observed_only_mae": 74.40265680914864,
+      "calibrated_winsorized_iqr_mae": 72.17368878589282,
+      "raw_observed_only_mae": 75.38338614247297,
+      "raw_winsorized_iqr_mae": 73.18834775591213
+    }
+  }
+}

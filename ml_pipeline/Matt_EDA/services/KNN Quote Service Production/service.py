@@ -410,6 +410,30 @@ class ProductionQuoteService:
             "avg_amount",
         ]
 
+        # Fallback to most recent year that has the requested month.
+        # E.g., if requesting Nov 2026 but only Jan-Sep 2019 exists, fall back to Nov 2018.
+        if not monthly_ref.empty and "ym_period" in monthly_ref.columns:
+            min_available_period = monthly_ref["ym_period"].min()
+            max_available_period = monthly_ref["ym_period"].max()
+            
+            # Helper: find most recent period matching a target month
+            def find_most_recent_with_month(target_period):
+                target_month = target_period.month
+                matching = monthly_ref[monthly_ref["ym_period"].dt.month == target_month]["ym_period"]
+                return matching.max() if not matching.empty else None
+            
+            # Fallback end_period: try to keep the requested month, fall back to max available if needed
+            if end_period > max_available_period:
+                fallback = find_most_recent_with_month(end_period)
+                end_period = fallback if fallback is not None else max_available_period
+            
+            # Fallback start_period: try to keep the requested month, fall back to max available if needed
+            if start_period > max_available_period:
+                fallback = find_most_recent_with_month(start_period)
+                start_period = fallback if fallback is not None else max_available_period
+            elif start_period < min_available_period:
+                start_period = min_available_period
+
         pool = self._build_window_pool(
             monthly_ref=monthly_ref,
             feature_cols=feature_cols,
