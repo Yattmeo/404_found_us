@@ -109,6 +109,18 @@ class ProductionQuoteService:
     def horizon_len_wk(self) -> int:
         return self.horizon_len_months * 4
 
+    @staticmethod
+    def _coerce_cost_type_column(df: pd.DataFrame) -> pd.DataFrame:
+        tx = df.copy()
+        if "cost_type_ID" in tx.columns:
+            raw = tx["cost_type_ID"]
+        elif "cost_type_id" in tx.columns:
+            raw = tx["cost_type_id"]
+        else:
+            raw = pd.Series([-1] * len(tx), index=tx.index)
+        tx["cost_type_ID"] = pd.to_numeric(raw, errors="coerce").fillna(-1).astype(int).astype(str)
+        return tx
+
     def _resolve_end_period(self, req: QuoteRequest, onboarding_df: pd.DataFrame | None) -> pd.Period:
         if req.as_of_date is not None:
             return pd.to_datetime(req.as_of_date).to_period("M")
@@ -183,6 +195,8 @@ class ProductionQuoteService:
         if tx.empty:
             raise ValueError("onboarding_merchant_txn_df has no valid dates.")
 
+        tx = self._coerce_cost_type_column(tx)
+
         tx["ym_period"] = tx["date"].dt.to_period("M")
         periods = pd.period_range(start_period, end_period, freq="M")
         tx = tx[tx["ym_period"].isin(periods)].copy()
@@ -190,7 +204,6 @@ class ProductionQuoteService:
             raise ValueError("No onboarding transactions in matching window.")
 
         tx["amount"] = pd.to_numeric(tx.get("amount"), errors="coerce")
-        tx["cost_type_ID"] = tx.get("cost_type_ID").fillna(-1).astype(int).astype(str)
 
         counts = (
             tx.groupby(["ym_period", "cost_type_ID"])
@@ -231,6 +244,7 @@ class ProductionQuoteService:
         tx = tx.dropna(subset=["date"])
         tx["amount"] = pd.to_numeric(tx.get("amount"), errors="coerce")
         tx["proc_cost"] = pd.to_numeric(tx.get("proc_cost"), errors="coerce")
+        tx = self._coerce_cost_type_column(tx)
         tx = tx.dropna(subset=["amount"])
         if tx.empty:
             return pd.DataFrame()

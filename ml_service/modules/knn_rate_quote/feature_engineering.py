@@ -12,6 +12,17 @@ def normalize_txn_columns(df: pd.DataFrame) -> pd.DataFrame:
     return renamed
 
 
+def _coerce_cost_type_series(df: pd.DataFrame) -> pd.Series:
+    if "cost_type_ID" in df.columns:
+        raw = df["cost_type_ID"]
+    elif "cost_type_id" in df.columns:
+        raw = df["cost_type_id"]
+    else:
+        raw = pd.Series([-1] * len(df), index=df.index)
+
+    return pd.to_numeric(raw, errors="coerce").fillna(-1).astype(int).astype(str)
+
+
 def build_monthly_features(df: pd.DataFrame, cost_type_ids: List[str]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
@@ -24,8 +35,7 @@ def build_monthly_features(df: pd.DataFrame, cost_type_ids: List[str]) -> pd.Dat
 
     tx["amount"] = pd.to_numeric(tx["amount"], errors="coerce")
     tx["proc_cost"] = pd.to_numeric(tx.get("proc_cost"), errors="coerce")
-    cost_type_col = "cost_type_ID" if "cost_type_ID" in tx.columns else "cost_type_id"
-    tx["cost_type_ID"] = tx.get(cost_type_col).fillna(-1).astype(int).astype(str)
+    tx["cost_type_ID"] = _coerce_cost_type_series(tx)
 
     tx["ym"] = tx["date"].dt.to_period("M")
 
@@ -134,8 +144,7 @@ def query_vector_from_txn_df(
     if in_month.empty:
         raise ValueError("No onboarding transactions found for selected month.")
 
-    cost_type_col = "cost_type_ID" if "cost_type_ID" in in_month.columns else "cost_type_id"
-    in_month["cost_type_ID"] = in_month.get(cost_type_col).fillna(-1).astype(int).astype(str)
+    in_month["cost_type_ID"] = _coerce_cost_type_series(in_month)
     counts = in_month.groupby("cost_type_ID").size().rename("count").reset_index()
     pivot = counts.pivot_table(index=[], columns="cost_type_ID", values="count", fill_value=0)
     pivot = pivot.reindex(columns=cost_type_ids, fill_value=0)
