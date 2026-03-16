@@ -1,0 +1,20 @@
+# Python artefacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Tests
+tests/
+.pytest_cache/
+
+# Local dev environment
+.venv/
+*.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
