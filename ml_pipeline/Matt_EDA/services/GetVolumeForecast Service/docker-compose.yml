@@ -1,0 +1,6 @@
+services:
+  get-volume-forecast:
+    build: .
+    ports:
+      - "8002:8000"
+    restart: unless-stopped

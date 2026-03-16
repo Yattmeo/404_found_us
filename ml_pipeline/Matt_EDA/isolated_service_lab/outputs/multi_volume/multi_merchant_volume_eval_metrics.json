@@ -1,0 +1,135 @@
+{
+  "generated_at_utc": "2026-03-16T10:15:21.372251+00:00",
+  "dataset": {
+    "csv": "/Users/yattmeo/Desktop/SMU/Code/404_found_us/ml_pipeline/Matt_EDA/isolated_service_lab/data/processed_transactions_4mcc.csv",
+    "mcc": 5411,
+    "eval_year": 2016,
+    "context_weeks": 8,
+    "forecast_horizon_weeks": 12,
+    "use_optimised_sarima": false,
+    "reference_merchants": [
+      523,
+      5249,
+      11767,
+      13102,
+      22886,
+      28534,
+      29918,
+      46809,
+      50036,
+      57373,
+      62581,
+      68228,
+      77786,
+      79843,
+      81891,
+      82268,
+      83275,
+      86925,
+      89243,
+      90855
+    ],
+    "target_merchants": [
+      93831
+    ],
+    "card_types": [
+      "debit",
+      "credit",
+      "debit (prepaid)"
+    ],
+    "n_reference_merchants": 20,
+    "n_target_merchants": 1,
+    "min_target_rows_per_year": 30,
+    "random_seed": 7,
+    "epsilon_actual_for_missing_weeks": 1e-09
+  },
+  "summary": {
+    "merchant_count": 1,
+    "get_volume_forecast": {
+      "mae_mean": 30.495000000166666,
+      "mae_median": 30.495000000166666,
+      "mae_std": 0.0,
+      "rmse_mean": 40.46716961521607,
+      "rmse_median": 40.46716961521607,
+      "rmse_std": 0.0
+    },
+    "get_volume_forecast_corrected_observed_only": {
+      "mae_mean": 36.594,
+      "mae_median": 36.594,
+      "mae_std": 0.0,
+      "merchant_count_with_observed_weeks": 1
+    },
+    "get_volume_forecast_raw": {
+      "mae_mean": 144.66803824109692,
+      "mae_median": 144.66803824109692,
+      "mae_std": 0.0,
+      "rmse_mean": 147.04869200163043,
+      "rmse_median": 147.04869200163043,
+      "rmse_std": 0.0
+    }
+  },
+  "per_merchant": [
+    {
+      "merchant_id": 93831,
+      "rows_in_eval_year": 96,
+      "forecast_mae": 30.495000000166666,
+      "forecast_rmse": 40.46716961521607,
+      "forecast_raw_mae": 144.66803824109692,
+      "forecast_raw_rmse": 147.04869200163043,
+      "forecast_mae_corrected_observed_only": 36.594,
+      "missing_forecast_weeks_filled_with_epsilon": 2,
+      "calibration": {
+        "context_window_weeks_count": 7,
+        "matched_calibration_points": 7,
+        "calibration_mode": "guarded_linear",
+        "is_fallback": false,
+        "fallback_reason": null,
+        "fallback_mean_total_proc_value": null,
+        "context_window_mean_total_proc_value": 32.15714285714286,
+        "generated_at_utc": "2026-03-16T10:15:16.756981Z",
+        "forecast_horizon_wks": 12,
+        "confidence_interval": 0.95,
+        "used_guarded_calibration": true,
+        "calibration_successful": true,
+        "calibration_mae": 37.884019947269344,
+        "calibration_rmse": 39.31003346320848,
+        "calibration_r2": -12.709031017404467
+      },
+      "sarima": {
+        "seasonal_length": 13,
+        "use_optimised_sarima": false,
+        "use_exogenous_sarimax": true,
+        "exogenous_feature_names": [
+          "weekly_txn_count_mean",
+          "weekly_txn_count_stdev",
+          "weekly_avg_txn_value_mean",
+          "weekly_avg_txn_value_stdev",
+          "weekly_total_proc_value_stdev",
+          "weekly_avg_txn_cost_pct_mean",
+          "weekly_avg_txn_cost_pct_stdev",
+          "neighbor_coverage"
+        ],
+        "selected_order": [
+          1,
+          1,
+          1
+        ],
+        "selected_seasonal_order": [
+          1,
+          1,
+          1,
+          13
+        ],
+        "aic": 2628.311732969033,
+        "fit_status": "ok",
+        "optimisation_attempted": false,
+        "optimisation_time_ms": null,
+        "optimisation_candidates_evaluated": 0
+      }
+    }
+  ],
+  "artifacts": {
+    "plot": "/Users/yattmeo/Desktop/SMU/Code/404_found_us/ml_pipeline/Matt_EDA/isolated_service_lab/outputs/multi_volume/multi_merchant_volume_forecast_panels.png",
+    "db": "/Users/yattmeo/Desktop/SMU/Code/404_found_us/ml_pipeline/Matt_EDA/isolated_service_lab/outputs/multi_volume/multi_merchant_volume_eval.sqlite"
+  }
+}
