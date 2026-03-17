@@ -8,7 +8,7 @@ import logging
 import os
 import random
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -30,6 +30,7 @@ from schemas import (
 from services import DataProcessingService, MerchantFeeCalculationService, MCCService
 from modules.merchant_quote.schemas import MerchantQuoteRequest, MerchantQuoteResponse
 from modules.merchant_quote.controller import create_merchant_quote
+from modules.merchant_quote.service import MerchantQuoteService
 from modules.cost_calculation.schemas import CostCalculationResponse
 from modules.cost_calculation.controller import run_cost_calculation
 
@@ -291,6 +292,269 @@ def calculate_desired_margin(data: dict, db: Session = Depends(get_db)):
     db.add(calc)
     db.commit()
     return {"status": "success", "data": result}
+
+
+@router.post("/calculations/desired-margin-details", tags=["Calculations"])
+def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
+    """
+    Dedicated aggregator endpoint for the Rates Quotation tool.
+
+    Reuses backend orchestration to call 3 ML endpoints:
+      1) /ml/getCompositeMerchant
+      2) /ml/GetCostForecast
+      3) /ml/GetVolumeForecast
+    """
+    transactions = data.get("transactions", [])
+    mcc = data.get("mcc")
+    if not mcc:
+        raise HTTPException(status_code=400, detail="MCC code required")
+
+    try:
+        mcc_int = int(mcc)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="MCC must be an integer")
+
+    desired_margin = float(data.get("desired_margin", 0.015) or 0.015)
+    avg_transaction_value = data.get("average_transaction_value")
+    monthly_transactions = data.get("monthly_transactions")
+
+    use_aggregate_inputs = avg_transaction_value is not None and monthly_transactions is not None
+
+    if use_aggregate_inputs:
+        try:
+            avg_ticket = float(avg_transaction_value)
+            txn_count = int(monthly_transactions)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail="average_transaction_value must be numeric and monthly_transactions must be an integer",
+            )
+
+        if avg_ticket <= 0 or txn_count <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="average_transaction_value and monthly_transactions must both be greater than zero",
+            )
+
+        total_volume = avg_ticket * txn_count
+        minimum_fee = float(data.get("fixed_fee", 0.30) or 0.30)
+        estimated_fees = (total_volume * desired_margin) + (minimum_fee * txn_count)
+        estimated_effective_rate = estimated_fees / total_volume if total_volume > 0 else 0.0
+
+        result = {
+            "success": True,
+            "transaction_count": txn_count,
+            "total_volume": float(total_volume),
+            "average_ticket": float(avg_ticket),
+            "desired_margin": float(desired_margin),
+            "recommended_rate": float(desired_margin),
+            "estimated_total_fees": float(estimated_fees),
+            "estimated_effective_rate": float(estimated_effective_rate),
+            "mcc": mcc_int,
+            "minimum_fee": minimum_fee,
+        }
+    else:
+        if not transactions:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either transactions or (average_transaction_value + monthly_transactions)",
+            )
+
+        result = MerchantFeeCalculationService.calculate_desired_margin(
+            transactions,
+            mcc_int,
+            desired_margin,
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+
+    calc = CalculationResult(
+        calculation_type="DESIRED_MARGIN",
+        mcc=mcc_int,
+        transaction_count=result["transaction_count"],
+        total_volume=Decimal(str(result["total_volume"])),
+        desired_margin=Decimal(str(result["desired_margin"])),
+        recommended_rate=Decimal(str(result["recommended_rate"])),
+    )
+    db.add(calc)
+    db.commit()
+
+    recommended_rate = float(result.get("recommended_rate") or 0.0)
+    card_type = str(data.get("card_type") or "both").strip().lower() or "both"
+
+    card_types = data.get("card_types")
+    if not isinstance(card_types, list) or not card_types:
+        card_types = [card_type] if card_type != "both" else ["both"]
+    else:
+        card_types = [str(v).strip().lower() for v in card_types if str(v).strip()]
+        if not card_types:
+            card_types = ["both"]
+
+    if use_aggregate_inputs:
+        onboarding_rows = MerchantQuoteService._build_onboarding_rows(
+            avg_ticket=result["average_ticket"],
+            monthly_txn_count=result["transaction_count"],
+            brands=["visa", "mastercard"],
+            effective_rate_pct=recommended_rate * 100.0,
+        )
+    else:
+        onboarding_rows = MerchantQuoteService.build_onboarding_rows_from_transactions(
+            transactions=transactions,
+            card_type=card_type,
+            effective_rate_pct=recommended_rate * 100.0,
+        )
+
+    pipeline = MerchantQuoteService.run_ml_forecast_pipeline(
+        mcc=mcc_int,
+        card_types=card_types,
+        onboarding_rows=onboarding_rows,
+    )
+
+    def _safe_float(value: object, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _week_label(index: int) -> str:
+        base = datetime.now(timezone.utc).date()
+        day = base + timedelta(days=(7 * (index - 1)))
+        return f"W{index} ({day.isoformat()})"
+
+    transaction_dates = []
+    merchant_id = data.get("merchant_id")
+    for tx in transactions:
+        raw = tx.get("transaction_date") or tx.get("date") or tx.get("txn_date")
+        if raw:
+            transaction_dates.append(str(raw))
+        if not merchant_id:
+            merchant_id = tx.get("merchant_id") or tx.get("merchantId")
+
+    tx_summary = {
+        "merchant_id": str(merchant_id) if merchant_id is not None else None,
+        "transaction_count": int(result.get("transaction_count") or 0),
+        "total_volume": _safe_float(result.get("total_volume"), 0.0),
+        "average_ticket": _safe_float(result.get("average_ticket"), 0.0),
+        "mcc": mcc_int,
+        "start_date": min(transaction_dates) if transaction_dates else None,
+        "end_date": max(transaction_dates) if transaction_dates else None,
+    }
+
+    cost_series = []
+    volume_series = []
+    profitability_curve = []
+    estimated_profit_min = None
+    estimated_profit_max = None
+    ml_context = None
+
+    if pipeline is not None:
+        composite_payload = pipeline.get("composite", {})
+        cost_payload = pipeline.get("cost", {})
+        volume_payload = pipeline.get("volume", {})
+        cost_forecast = cost_payload.get("forecast", [])
+        volume_forecast = volume_payload.get("forecast", [])
+
+        for item in cost_forecast:
+            idx = int(item.get("forecast_week_index") or 0)
+            cost_series.append(
+                {
+                    "week_index": idx,
+                    "label": _week_label(idx),
+                    "mid": _safe_float(item.get("proc_cost_pct_mid"), 0.0),
+                    "lower": _safe_float(item.get("proc_cost_pct_ci_lower"), 0.0),
+                    "upper": _safe_float(item.get("proc_cost_pct_ci_upper"), 0.0),
+                }
+            )
+
+        for item in volume_forecast:
+            idx = int(item.get("forecast_week_index") or 0)
+            volume_series.append(
+                {
+                    "week_index": idx,
+                    "label": _week_label(idx),
+                    "mid": _safe_float(item.get("total_proc_value_mid"), 0.0),
+                    "lower": _safe_float(item.get("total_proc_value_ci_lower"), 0.0),
+                    "upper": _safe_float(item.get("total_proc_value_ci_upper"), 0.0),
+                }
+            )
+
+        paired_len = min(len(cost_series), len(volume_series))
+        if paired_len > 0:
+            low_total = 0.0
+            high_total = 0.0
+            for idx in range(paired_len):
+                c = cost_series[idx]
+                v = volume_series[idx]
+                low_total += v["lower"] * (recommended_rate - c["upper"])
+                high_total += v["upper"] * (recommended_rate - c["lower"])
+            estimated_profit_min = low_total
+            estimated_profit_max = high_total
+
+            default_rate_grid = [
+                1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
+            ]
+            user_grid = data.get("rate_grid_pct")
+            if isinstance(user_grid, list) and user_grid:
+                rate_grid = []
+                for value in user_grid:
+                    try:
+                        rate_grid.append(float(value))
+                    except (TypeError, ValueError):
+                        continue
+                if not rate_grid:
+                    rate_grid = default_rate_grid
+            else:
+                rate_grid = default_rate_grid
+
+            for rate_pct in rate_grid:
+                rate_decimal = rate_pct / 100.0
+                week_probabilities = []
+                for c in cost_series[:paired_len]:
+                    mean = c["mid"]
+                    std_from_ci = abs(c["upper"] - c["lower"]) / 3.92
+                    std_dev = std_from_ci if std_from_ci > 0 else max(abs(mean) * 0.05, 0.0001)
+                    # P(cost <= quoted rate) == P(profitability >= 0)
+                    probability = MerchantQuoteService.normal_cdf(rate_decimal, mean, std_dev)
+                    week_probabilities.append(max(0.0, min(1.0, probability)))
+
+                probability_pct = (sum(week_probabilities) / len(week_probabilities)) * 100.0
+                profitability_curve.append(
+                    {
+                        "rate_pct": round(rate_pct, 2),
+                        "probability_pct": round(probability_pct, 2),
+                    }
+                )
+
+        ml_context = {
+            "k": int(composite_payload.get("k") or 0),
+            "composite_merchant_id": composite_payload.get("composite_merchant_id"),
+            "matching_start_month": composite_payload.get("matching_start_month"),
+            "matching_end_month": composite_payload.get("matching_end_month"),
+            "matched_neighbor_merchant_ids": composite_payload.get("matched_neighbor_merchant_ids", []),
+            "sarima_cost": cost_payload.get("sarima_metadata"),
+            "sarima_volume": volume_payload.get("sarima_metadata"),
+        }
+
+    fallback_profit = _safe_float(result.get("estimated_total_fees"), 0.0)
+    summary = {
+        "suggested_rate_pct": round(recommended_rate * 100.0, 2),
+        "margin_bps": int(round(_safe_float(result.get("desired_margin"), 0.0) * 10000.0)),
+        "estimated_profit_min": round(estimated_profit_min if estimated_profit_min is not None else fallback_profit, 2),
+        "estimated_profit_max": round(estimated_profit_max if estimated_profit_max is not None else fallback_profit, 2),
+    }
+
+    return {
+        "status": "success",
+        "data": {
+            "summary": summary,
+            "transaction_summary": tx_summary,
+            "cost_forecast": cost_series,
+            "volume_forecast": volume_series,
+            "profitability_curve": profitability_curve,
+            "ml_context": ml_context,
+            "calculation": result,
+        },
+    }
 
 
 # ── Merchants ──────────────────────────────────────────────────────────────────

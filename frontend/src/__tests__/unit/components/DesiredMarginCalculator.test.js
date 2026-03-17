@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 
 jest.mock('../../../services/api', () => ({
   desiredMarginAPI: {
-    calculateDesiredMargin: jest.fn(),
+    getDesiredMarginDetails: jest.fn(),
   },
 }));
 
@@ -65,13 +65,14 @@ describe('DesiredMarginCalculator', () => {
   });
 
   it('submits manual data flow and renders results view', async () => {
-    desiredMarginAPI.calculateDesiredMargin.mockResolvedValue({
+    desiredMarginAPI.getDesiredMarginDetails.mockResolvedValue({
       data: {
-        recommended_rate: 0.021,
-        desired_margin: 0.015,
-        estimated_total_fees: 200,
-        average_ticket: 75,
-        total_volume: 150,
+        summary: {
+          suggested_rate_pct: 2.1,
+          margin_bps: 150,
+          estimated_profit_min: 100.0,
+          estimated_profit_max: 200.0,
+        },
       },
     });
 
@@ -87,7 +88,7 @@ describe('DesiredMarginCalculator', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /calculate results/i }));
 
-    await waitFor(() => expect(desiredMarginAPI.calculateDesiredMargin).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(desiredMarginAPI.getDesiredMarginDetails).toHaveBeenCalledTimes(1));
     expect(screen.getByText(/desired margin results mock/i)).toBeInTheDocument();
   });
 
@@ -112,7 +113,7 @@ describe('DesiredMarginCalculator', () => {
       }
     };
 
-    desiredMarginAPI.calculateDesiredMargin.mockResolvedValue({ data: {} });
+    desiredMarginAPI.getDesiredMarginDetails.mockResolvedValue({ data: {} });
 
     render(<DesiredMarginCalculator onBackToLanding={jest.fn()} />);
 
@@ -131,15 +132,15 @@ describe('DesiredMarginCalculator', () => {
     fireEvent.change(screen.getByLabelText(/fixed fee/i), { target: { value: '0.4' } });
     fireEvent.click(screen.getByRole('button', { name: /calculate results/i }));
 
-    await waitFor(() => expect(desiredMarginAPI.calculateDesiredMargin).toHaveBeenCalledTimes(1));
-    expect(desiredMarginAPI.calculateDesiredMargin).toHaveBeenCalledWith(
+    await waitFor(() => expect(desiredMarginAPI.getDesiredMarginDetails).toHaveBeenCalledTimes(1));
+    expect(desiredMarginAPI.getDesiredMarginDetails).toHaveBeenCalledWith(
       expect.objectContaining({
         mcc: '5812',
+        average_transaction_value: 100.5,
+        monthly_transactions: 1,
         desired_margin: 0.012,
         fixed_fee: 0.4,
-        transactions: expect.arrayContaining([
-          expect.objectContaining({ merchantId: 'M1', mcc: '5812', amount: 100.5 }),
-        ]),
+        transactions: [],
       }),
     );
   });
@@ -161,7 +162,7 @@ describe('DesiredMarginCalculator', () => {
       ['2026-01-01', 'M2', '5411', 230],
     ]);
 
-    desiredMarginAPI.calculateDesiredMargin.mockRejectedValue(new Error('backend down'));
+    desiredMarginAPI.getDesiredMarginDetails.mockRejectedValue(new Error('backend down'));
 
     render(<DesiredMarginCalculator onBackToLanding={jest.fn()} />);
 

@@ -16,24 +16,34 @@ describe('DesiredMarginResults', () => {
         results={{
           suggestedRate: 2.2,
           marginBps: 150,
-          estimatedProfit: 3500.45,
-          quotableRange: { min: 2.1, max: 2.3 },
-          expectedATS: 120,
-          expectedVolume: 50000,
-          parsedData: {
-            merchantId: 'M-101',
-            mcc: '5812',
-            totalTransactions: 10,
-            totalAmount: 1000,
-            averageTicket: 100,
+          estimatedProfitMin: 12500,
+          estimatedProfitMax: 32500,
+          transactionSummary: {
+            mcc: 5812,
+            transaction_count: 10,
+            total_volume: 1000,
+            average_ticket: 100,
+            start_date: '2026-01-01',
+            end_date: '2026-01-31',
           },
+          mlContext: { matched_neighbor_merchant_ids: [1001, 1002] },
+          costForecast: [{ week_index: 1, label: 'W1', mid: 0.02 }],
+          volumeForecast: [{ week_index: 1, label: 'W1', mid: 64000 }],
+          profitabilityCurve: [{ rate_pct: 2.2, probability_pct: 80 }],
         }}
       />,
     );
 
-    expect(screen.getByText(/desired margin results/i)).toBeInTheDocument();
-    expect(screen.getAllByText('2.2%').length).toBeGreaterThan(0);
-    expect(screen.getByText('150 bps')).toBeInTheDocument();
+    expect(screen.getByText(/rates quotation results/i)).toBeInTheDocument();
+    expect(screen.getByText('2.20%')).toBeInTheDocument();
+    expect(screen.getByText('150')).toBeInTheDocument();
+    expect(screen.getByText('$12,500.00 - $32,500.00')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /more details/i }));
+    expect(screen.getByText(/sarima forecast - cost/i)).toBeInTheDocument();
+    expect(screen.getByText(/transaction summary/i)).toBeInTheDocument();
+    expect(screen.getByText(/volume trend/i)).toBeInTheDocument();
+    expect(screen.getByText(/probability of profitability/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /new calculation/i }));
     expect(onNewCalculation).toHaveBeenCalledTimes(1);

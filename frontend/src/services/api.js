@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api/v1';
+const API_BASE_URL =
+  process.env.REACT_APP_BACKEND_URL ||
+  process.env.REACT_APP_API_URL ||
+  '/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -143,6 +146,26 @@ export const desiredMarginAPI = {
       return response.data;
     } catch (error) {
       console.error('Error calculating desired margin:', error);
+      throw error;
+    }
+  },
+
+  getDesiredMarginDetails: async (payloadOrTransactions, mcc, desiredMargin = 0.015) => {
+    try {
+      const payload = Array.isArray(payloadOrTransactions)
+        ? {
+            transactions: payloadOrTransactions,
+            mcc,
+            desired_margin: desiredMargin,
+          }
+        : payloadOrTransactions;
+
+      const response = await api.post('/calculations/desired-margin-details', {
+        ...payload,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching desired margin details:', error);
       throw error;
     }
   },

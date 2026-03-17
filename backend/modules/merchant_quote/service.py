@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from math import erf, sqrt
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -22,6 +23,13 @@ _ML_SERVICE_URL = os.environ.get("ML_SERVICE_URL", "http://ml-service:8001")
 
 
 class MerchantQuoteService:
+
+    @staticmethod
+    def _safe_float(value: object, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _format_rate_range(lower: float, upper: float) -> str:
@@ -78,6 +86,102 @@ class MerchantQuoteService:
                 }
             )
         return rows
+
+    @staticmethod
+    def build_onboarding_rows_from_transactions(
+        transactions: list[dict],
+        card_type: str,
+        effective_rate_pct: float,
+    ) -> list[dict]:
+        rows: list[dict] = []
+        safe_rate = max(effective_rate_pct / 100.0, 0.0)
+
+        for tx in transactions:
+            amount = MerchantQuoteService._safe_float(tx.get("amount"), 0.0)
+            if amount <= 0:
+                continue
+
+            transaction_date = (
+                tx.get("transaction_date")
+                or tx.get("date")
+                or tx.get("txn_date")
+                or datetime.now(timezone.utc).date().isoformat()
+            )
+
+            rows.append(
+                {
+                    "transaction_date": str(transaction_date),
+                    "amount": round(amount, 2),
+                    "proc_cost": round(amount * safe_rate, 6),
+                    "cost_type_ID": int(tx.get("cost_type_ID") or tx.get("cost_type_id") or 1),
+                    "card_type": card_type,
+                }
+            )
+
+        return rows
+
+    @staticmethod
+    def run_ml_forecast_pipeline(
+        mcc: int,
+        card_types: list[str],
+        onboarding_rows: list[dict],
+    ) -> dict | None:
+        if not onboarding_rows:
+            return None
+
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                composite_resp = client.post(
+                    f"{_ML_SERVICE_URL}/ml/getCompositeMerchant",
+                    json={
+                        "onboarding_merchant_txn_df": onboarding_rows,
+                        "mcc": mcc,
+                        "card_types": card_types,
+                    },
+                )
+                composite_resp.raise_for_status()
+                composite_payload = composite_resp.json()
+
+                weekly_features = composite_payload.get("weekly_features", [])
+                if not weekly_features:
+                    return None
+
+                cost_resp = client.post(
+                    f"{_ML_SERVICE_URL}/ml/GetCostForecast",
+                    json={
+                        "composite_weekly_features": weekly_features,
+                        "onboarding_merchant_txn_df": onboarding_rows,
+                        "mcc": mcc,
+                    },
+                )
+                cost_resp.raise_for_status()
+                cost_payload = cost_resp.json()
+
+                volume_resp = client.post(
+                    f"{_ML_SERVICE_URL}/ml/GetVolumeForecast",
+                    json={
+                        "composite_weekly_features": weekly_features,
+                        "onboarding_merchant_txn_df": onboarding_rows,
+                        "mcc": mcc,
+                    },
+                )
+                volume_resp.raise_for_status()
+                volume_payload = volume_resp.json()
+        except Exception as exc:
+            logger.warning("ML insights pipeline failed: %s", exc)
+            return None
+
+        return {
+            "composite": composite_payload,
+            "cost": cost_payload,
+            "volume": volume_payload,
+        }
+
+    @staticmethod
+    def normal_cdf(x: float, mean: float, std_dev: float) -> float:
+        safe_std = max(std_dev, 1e-9)
+        z = (x - mean) / (safe_std * sqrt(2.0))
+        return 0.5 * (1.0 + erf(z))
 
     @staticmethod
     def _extract_rate_bounds_from_forecast(quote_payload: dict) -> tuple[float, float] | None:
@@ -142,47 +246,17 @@ class MerchantQuoteService:
         card_types: list[str],
         onboarding_rows: list[dict],
     ) -> MerchantQuoteInsights | None:
-        try:
-            with httpx.Client(timeout=20.0) as client:
-                composite_resp = client.post(
-                    f"{_ML_SERVICE_URL}/ml/getCompositeMerchant",
-                    json={
-                        "onboarding_merchant_txn_df": onboarding_rows,
-                        "mcc": mcc,
-                        "card_types": card_types,
-                    },
-                )
-                composite_resp.raise_for_status()
-                composite_payload = composite_resp.json()
-
-                weekly_features = composite_payload.get("weekly_features", [])
-                if not weekly_features:
-                    return None
-
-                cost_resp = client.post(
-                    f"{_ML_SERVICE_URL}/ml/GetCostForecast",
-                    json={
-                        "composite_weekly_features": weekly_features,
-                        "onboarding_merchant_txn_df": onboarding_rows,
-                        "mcc": mcc,
-                    },
-                )
-                cost_resp.raise_for_status()
-                cost_payload = cost_resp.json()
-
-                volume_resp = client.post(
-                    f"{_ML_SERVICE_URL}/ml/GetVolumeForecast",
-                    json={
-                        "composite_weekly_features": weekly_features,
-                        "onboarding_merchant_txn_df": onboarding_rows,
-                        "mcc": mcc,
-                    },
-                )
-                volume_resp.raise_for_status()
-                volume_payload = volume_resp.json()
-        except Exception as exc:
-            logger.warning("ML insights pipeline failed: %s", exc)
+        pipeline = MerchantQuoteService.run_ml_forecast_pipeline(
+            mcc=mcc,
+            card_types=card_types,
+            onboarding_rows=onboarding_rows,
+        )
+        if pipeline is None:
             return None
+
+        composite_payload = pipeline["composite"]
+        cost_payload = pipeline["cost"]
+        volume_payload = pipeline["volume"]
 
         cost_week1 = None
         if cost_payload.get("forecast"):

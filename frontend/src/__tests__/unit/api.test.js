@@ -7,6 +7,8 @@ describe('services/api', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    delete process.env.REACT_APP_BACKEND_URL;
+    delete process.env.REACT_APP_API_URL;
 
     apiInstance = {
       post: jest.fn(),
@@ -33,7 +35,7 @@ describe('services/api', () => {
 
   it('creates axios client with default base URL and json headers', () => {
     expect(axiosMock.create).toHaveBeenCalledWith({
-      baseURL: 'http://localhost:5000/api/v1',
+      baseURL: '/api/v1',
       headers: { 'Content-Type': 'application/json' },
     });
   });
@@ -149,6 +151,29 @@ describe('services/api', () => {
       desired_margin: 0.015,
     });
 
+    apiInstance.post.mockResolvedValueOnce({ data: { details: true } });
+    const detailsResponse = await desiredMarginAPI.getDesiredMarginDetails([{ amount: 60 }], '5812', 0.02);
+    expect(detailsResponse).toEqual({ details: true });
+    expect(apiInstance.post).toHaveBeenCalledWith('/calculations/desired-margin-details', {
+      transactions: [{ amount: 60 }],
+      mcc: '5812',
+      desired_margin: 0.02,
+    });
+
+    apiInstance.post.mockResolvedValueOnce({ data: { details: true, mode: 'object' } });
+    await desiredMarginAPI.getDesiredMarginDetails({
+      transactions: [{ amount: 10 }],
+      mcc: '5411',
+      desired_margin: 0.01,
+      card_type: 'both',
+    });
+    expect(apiInstance.post).toHaveBeenCalledWith('/calculations/desired-margin-details', {
+      transactions: [{ amount: 10 }],
+      mcc: '5411',
+      desired_margin: 0.01,
+      card_type: 'both',
+    });
+
     apiInstance.post.mockResolvedValueOnce({ data: { uploaded: true } });
     await desiredMarginAPI.uploadMerchantData(file);
     expect(apiInstance.post).toHaveBeenCalledWith(
@@ -185,6 +210,9 @@ describe('services/api', () => {
 
     apiInstance.post.mockRejectedValueOnce(apiError);
     await expect(desiredMarginAPI.calculateDesiredMargin([], '5812')).rejects.toThrow('network failure');
+
+    apiInstance.post.mockRejectedValueOnce(apiError);
+    await expect(desiredMarginAPI.getDesiredMarginDetails([], '5812')).rejects.toThrow('network failure');
 
     apiInstance.get.mockRejectedValueOnce(apiError);
     await expect(merchantAPI.getMerchants()).rejects.toThrow('network failure');

@@ -38,6 +38,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
     formState: { errors },
   } = useForm({
     defaultValues: {
+      merchantId: '',
       mcc: '',
       feeStructure: '',
       fixedFee: '',
@@ -46,36 +47,25 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
   });
 
   const feeStructure = watch('feeStructure');
+  const merchantId = watch('merchantId');
   const mcc = watch('mcc');
 
   const normalizeDesiredMarginResults = (apiPayload, summaryData) => {
-    const data = apiPayload?.data || apiPayload || {};
-
-    const recommendedRate = typeof data.recommended_rate === 'number'
-      ? data.recommended_rate
-      : null;
-    const desiredMargin = typeof data.desired_margin === 'number'
-      ? data.desired_margin
-      : null;
-
-    const suggestedRatePercent = recommendedRate !== null
-      ? parseFloat((recommendedRate * 100).toFixed(2))
-      : null;
+    const envelope = apiPayload || {};
+    const data = envelope?.data || {};
+    const summary = data?.summary || {};
 
     return {
-      suggestedRate: suggestedRatePercent,
-      marginBps: desiredMargin !== null ? Math.round(desiredMargin * 10000) : null,
-      estimatedProfit: typeof data.estimated_total_fees === 'number' ? data.estimated_total_fees : null,
-      quotableRange: suggestedRatePercent !== null
-        ? {
-            min: parseFloat(Math.max(0, suggestedRatePercent - 0.1).toFixed(2)),
-            max: parseFloat((suggestedRatePercent + 0.1).toFixed(2)),
-          }
-        : { min: null, max: null },
-      expectedATS: typeof data.average_ticket === 'number' ? data.average_ticket : summaryData?.averageTicket ?? null,
-      atsMarginError: null,
-      expectedVolume: typeof data.total_volume === 'number' ? data.total_volume : summaryData?.totalAmount ?? null,
-      volumeMarginError: null,
+      suggestedRate: typeof summary.suggested_rate_pct === 'number' ? summary.suggested_rate_pct : null,
+      marginBps: typeof summary.margin_bps === 'number' ? summary.margin_bps : null,
+      estimatedProfitMin: typeof summary.estimated_profit_min === 'number' ? summary.estimated_profit_min : null,
+      estimatedProfitMax: typeof summary.estimated_profit_max === 'number' ? summary.estimated_profit_max : null,
+      transactionSummary: data?.transaction_summary || null,
+      costForecast: Array.isArray(data?.cost_forecast) ? data.cost_forecast : [],
+      volumeForecast: Array.isArray(data?.volume_forecast) ? data.volume_forecast : [],
+      profitabilityCurve: Array.isArray(data?.profitability_curve) ? data.profitability_curve : [],
+      mlContext: data?.ml_context || null,
+      calculation: data?.calculation || null,
       parsedData: summaryData,
     };
   };
@@ -171,6 +161,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
       });
       
       setFileName('Manual Entry Data');
+      setValue('merchantId', merchantId, { shouldDirty: true });
       setFileError('');
     } catch (err) {
       console.error(err);
@@ -181,15 +172,25 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
   const onSubmit = async (data) => {
     setIsLoading(true);
     try {
+      const normalizedMerchantId = (data.merchantId || '').trim();
+      const avgTicket = Number(parsedData?.averageTicket || 0);
+      const totalTransactions = Number(parsedData?.totalTransactions || 0);
+
       const payload = {
-        transactions: parsedData?.transactions || [],
+        // Keep request compact to avoid nginx 413 for very large manual/file datasets.
+        transactions: [],
         mcc: data.mcc,
+        average_transaction_value: avgTicket,
+        monthly_transactions: totalTransactions,
         desired_margin: data.desiredMargin ? parseFloat(data.desiredMargin) / 10000 : 0.015,
         fixed_fee: data.fixedFee ? parseFloat(data.fixedFee) : 0.30,
       };
+      if (normalizedMerchantId) {
+        payload.merchant_id = normalizedMerchantId;
+      }
 
-      // Call API
-      const apiResults = await desiredMarginAPI.calculateDesiredMargin(payload);
+      // Call dedicated aggregator API to retrieve summary and detailed ML outputs in one response.
+      const apiResults = await desiredMarginAPI.getDesiredMarginDetails(payload);
 
       setResults(normalizeDesiredMarginResults(apiResults, parsedData));
       setShowResults(true);
@@ -200,15 +201,14 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
       const fallbackResults = {
         suggestedRate: null,
         marginBps: null,
-        estimatedProfit: null,
-        quotableRange: {
-          min: null,
-          max: null,
-        },
-        expectedATS: parsedData?.averageTicket ?? null,
-        atsMarginError: null,
-        expectedVolume: parsedData?.totalAmount ?? null,
-        volumeMarginError: null,
+        estimatedProfitMin: null,
+        estimatedProfitMax: null,
+        transactionSummary: null,
+        costForecast: [],
+        volumeForecast: [],
+        profitabilityCurve: [],
+        mlContext: null,
+        calculation: null,
         parsedData,
       };
       
@@ -275,6 +275,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
         const averageTicket = totalAmount / totalTransactions;
         
         setValue('mcc', mcc, { shouldValidate: true, shouldDirty: true });
+        setValue('merchantId', merchantId, { shouldDirty: true });
         setFileError('');
         
         setParsedData({
@@ -354,6 +355,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
         const averageTicket = totalAmount / totalTransactions;
         
         setValue('mcc', mcc, { shouldValidate: true, shouldDirty: true });
+        setValue('merchantId', merchantId, { shouldDirty: true });
         setFileError('');
         
         setParsedData({
@@ -534,6 +536,19 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
               </div>
 
               {/* MCC Code */}
+              <div>
+                <Label htmlFor="merchantId" className="text-lg font-semibold text-gray-900 mb-2">
+                  Merchant ID <span className="text-gray-500 font-normal">(Optional)</span>
+                </Label>
+                <Input
+                  id="merchantId"
+                  type="text"
+                  placeholder="Enter merchant ID"
+                  className="mt-2"
+                  {...register('merchantId')}
+                />
+              </div>
+
               <div>
                 <Label htmlFor="mcc" className="text-lg font-semibold text-gray-900 mb-2">
                   Merchant Category Code (MCC)

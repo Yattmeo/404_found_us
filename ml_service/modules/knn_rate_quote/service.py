@@ -185,6 +185,8 @@ class ProductionQuoteService:
         feature_cols: List[str],
         start_period: pd.Period,
         end_period: pd.Period,
+        original_start_period: pd.Period | None = None,
+        original_end_period: pd.Period | None = None,
     ) -> pd.DataFrame:
         tx = onboarding_df.copy()
         if "transaction_date" in tx.columns and "date" not in tx.columns:
@@ -200,6 +202,27 @@ class ProductionQuoteService:
         tx["ym_period"] = tx["date"].dt.to_period("M")
         periods = pd.period_range(start_period, end_period, freq="M")
         tx = tx[tx["ym_period"].isin(periods)].copy()
+
+        # If the onboarding window was remapped to historical periods (e.g., 2026 -> 2019),
+        # map onboarding periods by positional month index so query features still compute.
+        if tx.empty and original_start_period is not None and original_end_period is not None:
+            original_periods = pd.period_range(original_start_period, original_end_period, freq="M")
+            target_periods = pd.period_range(start_period, end_period, freq="M")
+            if len(original_periods) == len(target_periods) and len(target_periods) > 0:
+                period_map = {
+                    src: dst
+                    for src, dst in zip(original_periods, target_periods)
+                }
+                tx = onboarding_df.copy()
+                if "transaction_date" in tx.columns and "date" not in tx.columns:
+                    tx = tx.rename(columns={"transaction_date": "date"})
+                tx["date"] = pd.to_datetime(tx["date"], errors="coerce")
+                tx = tx.dropna(subset=["date"])
+                tx = self._coerce_cost_type_column(tx)
+                tx["ym_period"] = tx["date"].dt.to_period("M")
+                tx["ym_period"] = tx["ym_period"].map(lambda p: period_map.get(p, p))
+                tx = tx[tx["ym_period"].isin(periods)].copy()
+
         if tx.empty:
             raise ValueError("No onboarding transactions in matching window.")
 
@@ -443,6 +466,8 @@ class ProductionQuoteService:
 
         start_period = onboarding_df["date"].min().to_period("M")
         end_period = onboarding_df["date"].max().to_period("M")
+        original_start_period = start_period
+        original_end_period = end_period
 
         reference_txn = self.repository.load_transactions(req.mcc, req.card_types)
         reference_txn = self._filter_reference_by_card_types(reference_txn, req.card_types)
@@ -458,6 +483,28 @@ class ProductionQuoteService:
             "total_transactions",
             "avg_amount",
         ]
+
+        # Fallback to the most recent historical year containing the requested month.
+        if not monthly_ref.empty and "ym_period" in monthly_ref.columns:
+            min_available_period = monthly_ref["ym_period"].min()
+            max_available_period = monthly_ref["ym_period"].max()
+
+            def find_most_recent_with_month(target_period: pd.Period) -> pd.Period | None:
+                target_month = target_period.month
+                matches = monthly_ref[monthly_ref["ym_period"].dt.month == target_month]["ym_period"]
+                if matches.empty:
+                    return None
+                return matches.max()
+
+            if end_period > max_available_period:
+                fallback = find_most_recent_with_month(end_period)
+                end_period = fallback if fallback is not None else max_available_period
+
+            if start_period > max_available_period:
+                fallback = find_most_recent_with_month(start_period)
+                start_period = fallback if fallback is not None else max_available_period
+            elif start_period < min_available_period:
+                start_period = min_available_period
         pool = self._build_window_pool(monthly_ref, feature_cols, start_period, end_period)
         if pool.empty:
             raise ValueError("No reference pool available for onboarding window.")
@@ -471,6 +518,8 @@ class ProductionQuoteService:
             feature_cols=feature_cols,
             start_period=start_period,
             end_period=end_period,
+            original_start_period=original_start_period,
+            original_end_period=original_end_period,
         )
 
         effective_k = min(self.k, len(pool))
