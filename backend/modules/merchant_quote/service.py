@@ -20,9 +20,12 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 _ML_SERVICE_URL = os.environ.get("ML_SERVICE_URL", "http://ml-service:8001")
+_ML_PIPELINE_TIMEOUT_S = float(os.environ.get("ML_PIPELINE_TIMEOUT_S", "45"))
 
 
 class MerchantQuoteService:
+
+    MAX_SYNTHETIC_TXNS_PER_WEEK = 120
 
     @staticmethod
     def _safe_float(value: object, default: float = 0.0) -> float:
@@ -73,18 +76,25 @@ class MerchantQuoteService:
         today = datetime.now(timezone.utc).date()
         safe_rate = max(effective_rate_pct / 100.0, 0.005)
         card_type = MerchantQuoteService._card_type_from_brands(brands)
+
+        # Build synthetic transactions at a realistic weekly cadence from aggregate inputs.
+        # This keeps avg_amount near avg_ticket while scaling weekly volume using monthly_txn_count.
+        weekly_txn_count = max(1, int(round(monthly_txn_count / 4.345)))
+        weekly_txn_count = min(weekly_txn_count, MerchantQuoteService.MAX_SYNTHETIC_TXNS_PER_WEEK)
+
         for week_idx in range(8):
             day = today - timedelta(days=(7 * (7 - week_idx)))
-            rows.append(
-                {
-                    "transaction_date": day.isoformat(),
-                    "amount": round(avg_ticket, 2),
-                    "proc_cost": round(avg_ticket * safe_rate, 4),
-                    "cost_type_ID": 1,
-                    "card_type": card_type,
-                    "monthly_txn_count": monthly_txn_count,
-                }
-            )
+            for _ in range(weekly_txn_count):
+                rows.append(
+                    {
+                        "transaction_date": day.isoformat(),
+                        "amount": round(avg_ticket, 2),
+                        "proc_cost": round(avg_ticket * safe_rate, 4),
+                        "cost_type_ID": 1,
+                        "card_type": card_type,
+                        "monthly_txn_count": monthly_txn_count,
+                    }
+                )
         return rows
 
     @staticmethod
@@ -130,7 +140,7 @@ class MerchantQuoteService:
             return None
 
         try:
-            with httpx.Client(timeout=20.0) as client:
+            with httpx.Client(timeout=_ML_PIPELINE_TIMEOUT_S) as client:
                 composite_resp = client.post(
                     f"{_ML_SERVICE_URL}/ml/getCompositeMerchant",
                     json={

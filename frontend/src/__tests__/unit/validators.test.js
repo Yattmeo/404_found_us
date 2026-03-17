@@ -39,6 +39,14 @@ describe('validators.js', () => {
         expect(validateDate('25122025')).toBe(true);
       });
 
+      it('should accept ISO datetime format', () => {
+        expect(validateDate('2025-12-25T10:30:00Z')).toBe(true);
+      });
+
+      it('should accept space-separated datetime format', () => {
+        expect(validateDate('2025-12-25 10:30:00')).toBe(true);
+      });
+
       it('should accept today date', () => {
         const today = new Date();
         const dateStr = `${today.getDate()}/${today.getMonth() + 1}/${today.getFullYear()}`;

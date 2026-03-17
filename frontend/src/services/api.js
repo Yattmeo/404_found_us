@@ -50,14 +50,20 @@ export const merchantFeeAPI = {
     }
   },
 
-  // Calculate fees based on current rates
-  calculateCurrentRates: async (transactions, mcc, currentRate, fixedFee = 0.30) => {
+  // Calculate fees based on current rates (supports legacy args or a full payload object)
+  calculateCurrentRates: async (payloadOrTransactions, mcc, currentRate, fixedFee = 0.30) => {
     try {
+      const payload = Array.isArray(payloadOrTransactions)
+        ? {
+            transactions: payloadOrTransactions,
+            mcc,
+            current_rate: currentRate,
+            fixed_fee: fixedFee,
+          }
+        : payloadOrTransactions;
+
       const response = await api.post('/calculations/merchant-fee', {
-        transactions,
-        mcc,
-        current_rate: currentRate,
-        fixed_fee: fixedFee,
+        ...payload,
       });
       return response.data;
     } catch (error) {

@@ -93,6 +93,7 @@ def test_calculations_success_and_validation(client):
     mf_data = merchant_fee.json()['data']
     assert mf_data['transaction_count'] == 2
     assert mf_data['total_volume'] == 150.0
+    assert mf_data['input_mode'] == 'transactions'
 
     desired_margin = client.post(
         '/api/v1/calculations/desired-margin',

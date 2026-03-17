@@ -10,32 +10,44 @@ export const validateDate = (dateStr) => {
   if (!dateStr) return false;
 
   const trimmed = dateStr.trim();
+  let normalized = trimmed;
+
+  // Accept datetime values by extracting the date component.
+  // Examples: 2025-12-25T10:30:00Z, 2025-12-25 10:30:00, 25/12/2025 10:30:00
+  if (/^\d{4}-\d{1,2}-\d{1,2}[T\s].+$/.test(normalized)) {
+    normalized = normalized.split(/[T\s]/)[0];
+  } else if (/^\d{1,2}\/\d{1,2}\/\d{4}\s.+$/.test(normalized)) {
+    normalized = normalized.split(/\s+/)[0];
+  } else if (/^\d{1,2}-\d{1,2}-\d{4}\s.+$/.test(normalized)) {
+    normalized = normalized.split(/\s+/)[0];
+  }
+
   let day, month, year, parsedDate;
 
   // Try to parse different formats - support flexible day/month (1 or 2 digits)
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(normalized)) {
     // D/M/YYYY or DD/MM/YYYY
-    const parts = trimmed.split('/');
+    const parts = normalized.split('/');
     day = parseInt(parts[0]);
     month = parseInt(parts[1]);
     year = parseInt(parts[2]);
-  } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) {
+  } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) {
     // YYYY-M-D or YYYY-MM-DD
-    const parts = trimmed.split('-');
+    const parts = normalized.split('-');
     year = parseInt(parts[0]);
     month = parseInt(parts[1]);
     day = parseInt(parts[2]);
-  } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(trimmed)) {
+  } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(normalized)) {
     // D-M-YYYY or DD-MM-YYYY
-    const parts = trimmed.split('-');
+    const parts = normalized.split('-');
     day = parseInt(parts[0]);
     month = parseInt(parts[1]);
     year = parseInt(parts[2]);
-  } else if (/^\d{8}$/.test(trimmed)) {
+  } else if (/^\d{8}$/.test(normalized)) {
     // DDMMYYYY
-    day = parseInt(trimmed.substring(0, 2));
-    month = parseInt(trimmed.substring(2, 4));
-    year = parseInt(trimmed.substring(4, 8));
+    day = parseInt(normalized.substring(0, 2));
+    month = parseInt(normalized.substring(2, 4));
+    year = parseInt(normalized.substring(4, 8));
   } else {
     return false;
   }

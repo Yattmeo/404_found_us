@@ -32,6 +32,92 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
   const mccValue = watch('mcc');
   const fixedFee = watch('fixedFee');
 
+  const normalizeCurrentRateResults = (apiPayload, formData, txCount, avgTicket, totalAmount) => {
+    const envelope = apiPayload || {};
+    const data = envelope?.data || {};
+    const suggestedRate = typeof data?.applied_rate === 'number' ? data.applied_rate * 100 : null;
+    const marginBps = typeof data?.margin_bps === 'number' ? data.margin_bps : null;
+
+    const estimatedProfit =
+      typeof data?.margin_rate === 'number' && typeof data?.total_volume === 'number'
+        ? data.total_volume * data.margin_rate
+        : null;
+    const estimatedProfitMin = typeof estimatedProfit === 'number' ? estimatedProfit * 0.9 : null;
+    const estimatedProfitMax = typeof estimatedProfit === 'number' ? estimatedProfit * 1.1 : null;
+
+    const transactionSummary = {
+      transaction_count: typeof data?.transaction_count === 'number' ? data.transaction_count : txCount,
+      total_volume: typeof data?.total_volume === 'number' ? data.total_volume : totalAmount,
+      average_ticket: typeof data?.average_ticket === 'number' ? data.average_ticket : avgTicket,
+    };
+
+    const processingVolume =
+      typeof transactionSummary.total_volume === 'number'
+        ? transactionSummary.total_volume
+        : (typeof data?.calculation?.total_volume === 'number' ? data.calculation.total_volume : totalAmount);
+
+    let profitabilityPct = null;
+    if (
+      typeof estimatedProfitMin === 'number' &&
+      typeof estimatedProfitMax === 'number' &&
+      typeof processingVolume === 'number' &&
+      processingVolume > 0
+    ) {
+      const midpointProfit = (estimatedProfitMin + estimatedProfitMax) / 2;
+      profitabilityPct = Number(((midpointProfit / processingVolume) * 100).toFixed(2));
+    }
+
+    const averageTransactionSize =
+      typeof transactionSummary.average_ticket === 'number'
+        ? transactionSummary.average_ticket
+        : (typeof data?.calculation?.average_ticket === 'number' ? data.calculation.average_ticket : avgTicket);
+
+    const transactionCount =
+      typeof transactionSummary.transaction_count === 'number'
+        ? transactionSummary.transaction_count
+        : (typeof data?.calculation?.transaction_count === 'number' ? data.calculation.transaction_count : txCount);
+
+    return {
+      suggestedRate,
+      margin: marginBps,
+      estimatedProfit,
+      estimatedProfitMin,
+      estimatedProfitMax,
+      expectedATS: averageTransactionSize,
+      expectedVolume: processingVolume,
+      adoptionProbability: null,
+      profitability: profitabilityPct,
+      quotableRange: {
+        min: suggestedRate !== null ? Math.max(0, Number((suggestedRate - 0.1).toFixed(2))) : null,
+        max: suggestedRate !== null ? Number((suggestedRate + 0.1).toFixed(2)) : null,
+      },
+      processingVolume,
+      averageTransactionSize,
+      transactionCount,
+      currentRateProvided: !!formData.currentRate,
+      costForecast: [],
+      volumeForecast: [],
+      profitabilityCurve: [],
+      mlContext: null,
+      transactionSummary,
+      calculation: data,
+    };
+  };
+
+  const computeTransactionMetrics = (input) => {
+    if (Array.isArray(input)) {
+      const txCount = input.length;
+      const totalAmount = input.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+      const avgTicket = txCount > 0 ? totalAmount / txCount : 0;
+      return { txCount, totalAmount, avgTicket };
+    }
+
+    const txCount = Number(input?.totalTransactions || 0);
+    const totalAmount = Number(input?.totalAmount || 0);
+    const avgTicket = Number(input?.averageTicket || (txCount > 0 ? totalAmount / txCount : 0));
+    return { txCount, totalAmount, avgTicket };
+  };
+
   const handleDataValidated = (data, mcc) => {
     setTransactionData(data);
     setDataValidated(true);
@@ -43,24 +129,34 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
   const onSubmit = async (data) => {
     setIsLoading(true);
     try {
-      // Prepare API payload
+      const { txCount, totalAmount, avgTicket } = computeTransactionMetrics(transactionData);
+
+      // Prepare compact payload to avoid sending raw transactions.
       const payload = {
         mcc: data.mcc,
-        feeStructure: data.feeStructure,
-        fixedFee: data.fixedFee ? parseFloat(data.fixedFee) : null,
-        currentRate: data.currentRate ? parseFloat(data.currentRate) : null,
-        transactions: transactionData,
+        average_transaction_value: avgTicket,
+        monthly_transactions: txCount,
+        fixedFee: data.fixedFee === '' || data.fixedFee === undefined ? null : parseFloat(data.fixedFee),
+        currentRate: data.currentRate === '' || data.currentRate === undefined ? null : parseFloat(data.currentRate),
+        transactions: [],
       };
 
-      // Call API
+      // Align payload keys with backend contract.
+      payload.fixed_fee = payload.fixedFee ?? 0.30;
+      payload.current_rate = payload.currentRate !== null && payload.currentRate !== undefined
+        ? payload.currentRate / 100
+        : null;
+      delete payload.fixedFee;
+      delete payload.currentRate;
+
+      // Call the dedicated current-rate profitability endpoint.
       const apiResults = await merchantFeeAPI.calculateCurrentRates(payload);
-      setResults(apiResults);
+      setResults(normalizeCurrentRateResults(apiResults, data, txCount, avgTicket, totalAmount));
     } catch (error) {
       console.error('Calculation error:', error);
       // TODO: Remove this fallback once backend API is fully implemented
-      // Calculate what we can from actual transaction data
-      const totalAmount = transactionData.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
-      const avgTransactionSize = transactionData.length > 0 ? totalAmount / transactionData.length : 0;
+      // Calculate what we can from available transaction summary
+      const { txCount, totalAmount, avgTicket } = computeTransactionMetrics(transactionData);
       
       const mockResults = {
         // TEMPORARY: These should come from backend cost engine model
@@ -78,8 +174,8 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
         
         // Dynamic values from actual transaction data
         processingVolume: totalAmount,
-        averageTransactionSize: avgTransactionSize,
-        transactionCount: transactionData.length,
+        averageTransactionSize: avgTicket,
+        transactionCount: txCount,
         currentRateProvided: !!data.currentRate,
         
         // Backend should provide profitDistribution array for chart

@@ -11,6 +11,7 @@ const validRow = {
   transaction_date: '2026-01-01',
   card_brand: 'Visa',
   merchant_id: 'M1',
+  mcc: '5411',
   amount: '100.00',
   transaction_type: 'Sale',
   card_type: 'Credit',
@@ -48,15 +49,15 @@ describe('DataUploadValidator', () => {
     );
 
     const fileInput = document.querySelector('#file-upload');
-    const csvFile = new File(['a,b'], 'test.csv', { type: 'text/csv' });
+    const csvFile = new File(['a,b'], 'transactions_mcc_5411.csv', { type: 'text/csv' });
     fireEvent.change(fileInput, { target: { files: [csvFile] } });
 
-    await waitFor(() => expect(screen.getByText(/preview: test.csv/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/preview: transactions_mcc_5411.csv/i)).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /proceed to projection/i }));
 
     expect(onValidDataConfirmed).toHaveBeenCalledWith([validRow, validRow]);
-    expect(onMCCExtracted).toHaveBeenCalledWith('5812');
+    expect(onMCCExtracted).toHaveBeenCalledWith('5411');
   });
 
   it('shows validation errors and supports dismissing banner', async () => {

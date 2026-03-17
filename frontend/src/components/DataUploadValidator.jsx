@@ -12,8 +12,15 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
   const [previewData, setPreviewData] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [fullData, setFullData] = useState([]);
+  const [detectedMcc, setDetectedMcc] = useState('');
 
-  const requiredColumns = ['transaction_id', 'transaction_date', 'card_brand', 'merchant_id', 'amount', 'transaction_type', 'card_type'];
+  const requiredColumns = ['transaction_id', 'transaction_date', 'card_brand', 'merchant_id', 'amount', 'card_type'];
+
+  const extractMccFromFilename = (name) => {
+    if (!name) return '';
+    const match = String(name).match(/(?:^|[_-])mcc[_-]?(\d{4})(?:[_-]|\.|$)/i);
+    return match ? match[1] : '';
+  };
 
   const handleDownloadTemplate = () => {
     const headers = requiredColumns.join(',');
@@ -65,12 +72,21 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
     setIsValidating(true);
 
     try {
-      const validation = await parseFileData(file, requiredColumns);
+      const validation = await parseFileData(file, requiredColumns, {
+        summaryOnly: true,
+        previewLimit: 10,
+        maxErrors: 100,
+      });
 
       if (validation.errors.length === 0) {
-        // Show preview of first 10 rows
-        setPreviewData(validation.data.slice(0, 10));
-        setFullData(validation.data);
+        setPreviewData(validation.data || []);
+        setFullData(validation.summary || validation.data || []);
+        const mccFromSummary = validation?.summary?.mcc ? String(validation.summary.mcc).trim() : '';
+        const mccFromRows = Array.isArray(validation?.data) && validation.data.length > 0 && validation.data[0]?.mcc
+          ? String(validation.data[0].mcc).trim()
+          : '';
+        const mccFromFile = extractMccFromFilename(file.name);
+        setDetectedMcc(mccFromSummary || mccFromRows || mccFromFile || '');
         setShowPreview(true);
         setValidationErrors([]);
       } else {
@@ -104,11 +120,14 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
   };
 
   const handleProceed = () => {
-    if (fullData.length > 0) {
+    const totalRows = Array.isArray(fullData)
+      ? fullData.length
+      : Number(fullData?.totalTransactions || 0);
+
+    if (totalRows > 0) {
       onValidDataConfirmed(fullData);
-      // Auto-detect MCC if present in data
-      if (fullData[0].merchant_id && onMCCExtracted) {
-        onMCCExtracted('5812'); // Placeholder - would extract from data
+      if (detectedMcc && onMCCExtracted) {
+        onMCCExtracted(detectedMcc);
       }
     }
   };
@@ -120,7 +139,12 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
     setShowPreview(false);
     setPreviewData([]);
     setFullData([]);
+    setDetectedMcc('');
   };
+
+  const totalRows = Array.isArray(fullData)
+    ? fullData.length
+    : Number(fullData?.totalTransactions || 0);
 
   return (
     <div className="space-y-4">
@@ -215,7 +239,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
         <div className="space-y-4 bg-white rounded-2xl border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">Preview: {fileName}</h3>
-            <p className="text-sm text-gray-600">{fullData.length} total rows</p>
+            <p className="text-sm text-gray-600">{totalRows} total rows</p>
           </div>
 
           {/* Preview Table */}
@@ -244,7 +268,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
             </table>
           </div>
 
-          <p className="text-xs text-gray-600">Showing first 10 rows of {fullData.length} total</p>
+          <p className="text-xs text-gray-600">Showing first {previewData.length} rows of {totalRows} total</p>
 
           <div className="flex gap-3">
             <Button

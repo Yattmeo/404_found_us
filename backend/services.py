@@ -109,6 +109,9 @@ class DataProcessingService:
 
 class MerchantFeeCalculationService:
     """Service for merchant fee calculations"""
+
+    # Default quote margin applied when caller does not provide a current/quoted rate.
+    DEFAULT_QUOTE_MARGIN_RATE = 0.003  # 30 bps
     
     # Standard MCC-based fee rates
     MCC_RATES = {
@@ -136,10 +139,14 @@ class MerchantFeeCalculationService:
         if not transactions:
             return {'error': 'No transactions provided'}
         
-        # Get base rate from MCC if not provided
+        # Get baseline cost rate from MCC and derive margin from the quoted rate.
+        mcc_data = MerchantFeeCalculationService.MCC_RATES.get(str(mcc), {})
+        base_cost_rate = mcc_data.get('base_rate', 0.025)
         if current_rate is None:
-            mcc_data = MerchantFeeCalculationService.MCC_RATES.get(mcc, {})
-            current_rate = mcc_data.get('base_rate', 0.025)
+            current_rate = float(base_cost_rate) + MerchantFeeCalculationService.DEFAULT_QUOTE_MARGIN_RATE
+
+        margin_rate = float(current_rate) - float(base_cost_rate)
+        margin_bps = int(round(margin_rate * 10000))
         
         total_volume = Decimal('0')
         total_fees = Decimal('0')
@@ -169,7 +176,10 @@ class MerchantFeeCalculationService:
             'effective_rate': float(effective_rate),
             'average_ticket': float(average_ticket),
             'mcc': mcc,
+            'base_cost_rate': float(base_cost_rate),
             'applied_rate': current_rate,
+            'margin_rate': float(margin_rate),
+            'margin_bps': margin_bps,
             'fixed_fee': fixed_fee,
             'minimum_fee': minimum_fee,
         }
@@ -203,8 +213,12 @@ class MerchantFeeCalculationService:
         if total_volume <= 0:
             return {'error': 'Total transaction volume must be greater than zero'}
         
-        # Calculate required rate
-        required_rate = Decimal(str(desired_margin))
+        # Quoted rate should be cost + margin.
+        # Use the MCC base rate as baseline cost when available.
+        mcc_data = MerchantFeeCalculationService.MCC_RATES.get(str(mcc), {})
+        base_cost_rate = Decimal(str(mcc_data.get('base_rate', 0.025)))
+        margin_rate = Decimal(str(desired_margin))
+        required_rate = base_cost_rate + margin_rate
         average_ticket = total_volume / Decimal(str(transaction_count)) if transaction_count > 0 else Decimal('0')
         
         # Calculate estimated fees with required rate
@@ -217,6 +231,7 @@ class MerchantFeeCalculationService:
             'total_volume': float(total_volume),
             'average_ticket': float(average_ticket),
             'desired_margin': desired_margin,
+            'base_cost_rate': float(base_cost_rate),
             'recommended_rate': float(required_rate),
             'estimated_total_fees': float(estimated_fees),
             'estimated_effective_rate': float(estimated_effective_rate),

@@ -7,7 +7,7 @@ describe('ResultsPanel', () => {
     expect(screen.getByText(/submit the form to see results/i)).toBeInTheDocument();
   });
 
-  it('renders quotation results and handles new calculation click', () => {
+  it('renders no-current-rate results and handles new calculation click', () => {
     const onNewCalculation = jest.fn();
     render(
       <ResultsPanel
@@ -25,8 +25,8 @@ describe('ResultsPanel', () => {
       />,
     );
 
-    expect(screen.getByText(/quotation results/i)).toBeInTheDocument();
-    expect(screen.getAllByText('2.5%').length).toBeGreaterThan(0);
+    expect(screen.getByText(/profitability calculation results/i)).toBeInTheDocument();
+    expect(screen.getAllByText('2.50%').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: /new calculation/i }));
     expect(onNewCalculation).toHaveBeenCalledTimes(1);

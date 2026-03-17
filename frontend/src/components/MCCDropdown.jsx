@@ -3,8 +3,10 @@ import { Check, ChevronsUpDown } from 'lucide-react';
 
 // Sample MCC codes
 const MCC_CODES = [
+  { code: '4121', description: 'Taxicabs and Limousines' },
   { code: '5812', description: 'Eating Places and Restaurants' },
   { code: '5411', description: 'Grocery Stores and Supermarkets' },
+  { code: '5499', description: 'Miscellaneous Food Stores' },
   { code: '5541', description: 'Service Stations' },
   { code: '5311', description: 'Department Stores' },
   { code: '5912', description: 'Drug Stores and Pharmacies' },

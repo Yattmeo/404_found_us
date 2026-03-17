@@ -61,6 +61,28 @@ describe('fileParser.js', () => {
       expect(result.valid).toBe(true);
       expect(result.data).toHaveLength(2);
     });
+    it('should accept lowercase card_type values', () => {
+      const data = [
+        VALID_HEADERS,
+        '1234567,25/12/2025,Visa,654321,99.99,Online,debit',
+        '2345678,24/12/2025,Mastercard,123456,50.00,Offline,credit',
+      ];
+      const result = validateFileStructure(data, REQUIRED_COLUMNS);
+      expect(result.valid).toBe(true);
+      expect(result.data[0].card_type).toBe('Debit');
+      expect(result.data[1].card_type).toBe('Credit');
+    });
+
+    it('should accept datetime transaction_date values', () => {
+      const data = [
+        VALID_HEADERS,
+        '1234567,2025-12-25T10:30:00Z,Visa,654321,99.99,Online,Debit',
+        '2345678,2025-12-24 23:59:59,Mastercard,123456,50.00,Offline,Credit',
+      ];
+      const result = validateFileStructure(data, REQUIRED_COLUMNS);
+      expect(result.valid).toBe(true);
+      expect(result.data).toHaveLength(2);
+    });
     it('should reject rows with empty required fields', () => {
       const data = [
         VALID_HEADERS,
@@ -198,7 +220,7 @@ describe('fileParser.js', () => {
       const result = validateFileStructure(data, REQUIRED_COLUMNS);
       expect(result.data.length).toBeGreaterThan(0);
     });
-    it('should reject invalid card_brand, transaction_type, card_type, transaction_id, merchant_id', () => {
+    it('should reject invalid card_brand, card_type, transaction_id, merchant_id', () => {
       const data = [
         VALID_HEADERS,
         'abcdefg,25/12/2025,Discover,12345,99.99,InvalidType,InvalidCard',
@@ -206,7 +228,6 @@ describe('fileParser.js', () => {
       const result = validateFileStructure(data, REQUIRED_COLUMNS);
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.column === 'card_brand')).toBe(true);
-      expect(result.errors.some((e) => e.column === 'transaction_type')).toBe(true);
       expect(result.errors.some((e) => e.column === 'card_type')).toBe(true);
       expect(result.errors.some((e) => e.column === 'transaction_id')).toBe(true);
       expect(result.errors.some((e) => e.column === 'merchant_id')).toBe(true);
