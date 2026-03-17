@@ -6,9 +6,16 @@ interface QuotationResultProps {
   quoteResult: QuoteResult;
   onStartOver: () => void;
   isPlaceholderQuote?: boolean;
+  quoteError?: string | null;
 }
 
-export function QuotationResult({ businessData, quoteResult, onStartOver, isPlaceholderQuote = false }: QuotationResultProps) {
+export function QuotationResult({
+  businessData,
+  quoteResult,
+  onStartOver,
+  isPlaceholderQuote = false,
+  quoteError = null,
+}: QuotationResultProps) {
   const formatCurrency = (value: number) => {
     return `$${value.toFixed(2)}`;
   };
@@ -35,6 +42,12 @@ export function QuotationResult({ businessData, quoteResult, onStartOver, isPlac
 
   return (
     <div className="space-y-6">
+      {quoteError && (
+        <div role="alert" className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-900">
+          {quoteError}
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white rounded-lg shadow p-6 md:p-8">
         <div className="flex items-center justify-between mb-2">

@@ -172,11 +172,26 @@ async def upload_transactions(
     parse_errors = list(errors)
     for i, row in enumerate(rows):
         try:
+            raw_transaction_date = row.get("transaction_date")
+            parsed_transaction_date = None
+
+            for date_format in ("%d/%m/%Y", "%Y-%m-%d"):
+                try:
+                    parsed_transaction_date = datetime.strptime(
+                        str(raw_transaction_date), date_format
+                    ).date()
+                    break
+                except (TypeError, ValueError):
+                    continue
+
+            if parsed_transaction_date is None:
+                raise ValueError(
+                    "transaction_date must be in DD/MM/YYYY or YYYY-MM-DD format"
+                )
+
             tx = Transaction(
                 transaction_id=row.get("transaction_id"),
-                transaction_date=datetime.strptime(
-                    row.get("transaction_date"), "%d/%m/%Y"
-                ).date(),
+                transaction_date=parsed_transaction_date,
                 merchant_id=row.get("merchant_id"),
                 amount=Decimal(str(row.get("amount", 0))),
                 transaction_type=row.get("transaction_type"),

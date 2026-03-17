@@ -164,6 +164,7 @@ export default function App() {
                   quoteResult={quoteResult}
                   onStartOver={handleStartOver}
                   isPlaceholderQuote={isPlaceholderQuote}
+                  quoteError={quoteError}
                 />
               )}
             </>
