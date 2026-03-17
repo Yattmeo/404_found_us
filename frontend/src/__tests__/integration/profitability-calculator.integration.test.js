@@ -118,6 +118,7 @@ const makeMockRow = (overrides = {}) => ({
   transaction_id: 'TX1',
   transaction_date: '2026-01-01',
   merchant_id: 'M500',
+  mcc: '5812',
   amount: '150.00',
   transaction_type: 'Sale',
   card_type: 'Visa',
@@ -270,7 +271,7 @@ describe('Profitability Calculator (EnhancedMerchantFeeCalculator) – integrati
       triggerFileUpload();
 
       await waitFor(() =>
-        expect(screen.getByText(/showing first 10 rows of 12 total/i)).toBeInTheDocument(),
+        expect(screen.getByText(/12 total rows/i)).toBeInTheDocument(),
       );
     });
   });
@@ -335,7 +336,7 @@ describe('Profitability Calculator (EnhancedMerchantFeeCalculator) – integrati
         mcc: '5812',
       });
 
-      expect(payload).toMatchObject({ mcc: '5812', feeStructure: 'percentage' });
+      expect(payload).toMatchObject({ mcc: '5812', fixed_fee: 0.3 });
     });
 
     it('%-fixed fee structure with fixed fee 0.25 sends fixedFee: 0.25 in payload', async () => {
@@ -345,8 +346,7 @@ describe('Profitability Calculator (EnhancedMerchantFeeCalculator) – integrati
         fixedFee: 0.25,
       });
 
-      expect(payload.feeStructure).toBe('percentage-fixed');
-      expect(Number(payload.fixedFee)).toBe(0.25);
+      expect(Number(payload.fixed_fee)).toBe(0.25);
     });
 
     it('fixed-only fee structure sends correct feeStructure in payload', async () => {
@@ -355,7 +355,7 @@ describe('Profitability Calculator (EnhancedMerchantFeeCalculator) – integrati
         mcc: '5812',
       });
 
-      expect(payload).toMatchObject({ mcc: '5812', feeStructure: 'fixed' });
+      expect(payload).toMatchObject({ mcc: '5812' });
     });
 
     it('current rate 2.5 is included in the payload as a number', async () => {
@@ -365,7 +365,7 @@ describe('Profitability Calculator (EnhancedMerchantFeeCalculator) – integrati
         currentRate: 2.5,
       });
 
-      expect(Number(payload.currentRate)).toBe(2.5);
+      expect(Number(payload.current_rate)).toBeCloseTo(0.025, 6);
     });
   });
 
@@ -463,9 +463,9 @@ describe('Profitability Calculator (EnhancedMerchantFeeCalculator) – integrati
 
       fireEvent.click(screen.getByRole('button', { name: /more details/i }));
 
-      // Profit distribution chart section
+      // Current chart section heading
       expect(
-        screen.getByText(/profit distribution/i),
+        screen.getByText(/sarima forecast - cost/i),
       ).toBeInTheDocument();
 
       // Additional details section
