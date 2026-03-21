@@ -30,7 +30,8 @@ jobs:
 
   integration-tests:
     name: Run Integration Tests
-    needs: unit-tests # unit-tests must pass before this job begins.
+    needs: unit-tests 
+    if: always() # CRITICAL ADDITION: This forces the job to run even if unit-tests fail
     runs-on: ubuntu-latest
     defaults:
       run:
