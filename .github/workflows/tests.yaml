@@ -4,7 +4,6 @@ on:
   workflow_dispatch: # Enables manual workflow execution
   push:
 
-
 permissions:
   contents: read
 
@@ -27,7 +26,7 @@ jobs:
       # Execute the unit test suite within the isolated frontend container.
       # Background services are purposely NOT started here to ensure fast execution.
       run: |
-        docker-compose run --rm frontend npm test -- --watchAll=false --testPathPattern=src/__tests__/unit
+        docker compose run --rm frontend npm test -- --watchAll=false --testPathPattern=src/__tests__/unit
 
   integration-tests:
     name: Run Integration Tests
@@ -47,15 +46,15 @@ jobs:
     - name: Start Background Services
       # Initialize dependent services required for integration testing.
       run: |
-        docker-compose up -d postgres ml-service backend
+        docker compose up -d postgres ml-service backend
         sleep 10 # Delay execution to ensure dependent services are fully initialized.
 
     - name: Run Frontend Integration Tests
       # Execute the integration test suite.
       run: |
-        docker-compose run --rm frontend npm test -- --watchAll=false --testPathPattern=src/__tests__/integration
+        docker compose run --rm frontend npm test -- --watchAll=false --testPathPattern=src/__tests__/integration
 
     - name: Tear down Docker environment
       if: always() # Ensure environment teardown executes regardless of previous step success or failure.
       run: |
-        docker-compose down -v
+        docker compose down -v
