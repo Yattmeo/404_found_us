@@ -2,8 +2,8 @@ name: Frontend Dockerized Testing
 
 on:
   push:
-    # Triggers on pushes to main and your current feature branch
-    branches: [ "main", "404_found_us-ui-ux-branch" ] 
+    # Triggers on pushes to UI-UX branch
+    branches: [ "404_found_us-ui-ux-branch" ] 
   pull_request:
     branches: [ "main" ]
   schedule:
@@ -36,7 +36,7 @@ jobs:
 
   integration-tests:
     name: Run Integration Tests
-    needs: unit-tests # CRITICAL: This mandates that unit-tests must pass before this job begins.
+    needs: unit-tests # unit-tests must pass before this job begins.
     runs-on: ubuntu-latest
     defaults:
       run:
