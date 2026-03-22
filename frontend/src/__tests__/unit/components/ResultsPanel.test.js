@@ -53,4 +53,31 @@ describe('ResultsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /more details/i }));
     expect(screen.getByText(/additional details/i)).toBeInTheDocument();
   });
+
+  it('orders negative estimated profit range and colors both bounds red', () => {
+    render(
+      <ResultsPanel
+        hasCurrentRate
+        results={{
+          profitability: -0.8,
+          margin: -80,
+          estimatedProfitMin: -169455,
+          estimatedProfitMax: -207112,
+          processingVolume: 100000,
+          suggestedRate: 2.1,
+          averageTransactionSize: 100,
+          profitDistribution: [],
+        }}
+      />,
+    );
+
+    const lowerBound = screen.getByText('-$207,112');
+    const upperBound = screen.getByText('-$169,455');
+
+    expect(lowerBound).toHaveClass('text-red-600');
+    expect(upperBound).toHaveClass('text-red-600');
+    expect(
+      screen.getByText((_, element) => element?.textContent === '-$207,112 - -$169,455'),
+    ).toBeInTheDocument();
+  });
 });

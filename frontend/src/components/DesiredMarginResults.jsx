@@ -263,7 +263,18 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
     );
   };
 
-  const SingleCurveChart = ({ title, points, yLabel, valueFormatter, useSmooth = true, tooltipLabel = 'Value', yearCaption = '' }) => {
+  const SingleCurveChart = ({
+    title,
+    points,
+    yLabel,
+    valueFormatter,
+    useSmooth = true,
+    tooltipLabel = 'Value',
+    yearCaption = '',
+    xLabel = '',
+    yMinOverride = null,
+    yMaxOverride = null,
+  }) => {
     const [hoveredIndex, setHoveredIndex] = useState(null);
     const chartPoints = Array.isArray(points) ? points : [];
 
@@ -281,8 +292,9 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
       const usableH = height - top - bottom;
 
       const ys = chartPoints.map((p) => Number(p.value || 0));
-      let minY = Math.min(...ys);
-      let maxY = Math.max(...ys);
+      const hasYOverride = Number.isFinite(yMinOverride) && Number.isFinite(yMaxOverride) && yMaxOverride > yMinOverride;
+      let minY = hasYOverride ? Number(yMinOverride) : Math.min(...ys);
+      let maxY = hasYOverride ? Number(yMaxOverride) : Math.max(...ys);
       if (minY === maxY) {
         const pad = Math.max(Math.abs(minY) * 0.05, 1);
         minY -= pad;
@@ -296,7 +308,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
       });
 
       return { width, height, left, right, top, bottom, usableW, usableH, minY, maxY, coords };
-    }, [chartPoints]);
+    }, [chartPoints, yMinOverride, yMaxOverride]);
 
     if (!state) {
       return (
@@ -356,8 +368,14 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
             ))}
 
             {yearCaption ? (
-              <text x={left + state.usableW / 2} y={height - 1} textAnchor="middle" className="fill-gray-400 text-[11px]">
+              <text x={left + state.usableW / 2} y={height - 14} textAnchor="middle" className="fill-gray-400 text-[11px]">
                 {yearCaption}
+              </text>
+            ) : null}
+
+            {xLabel ? (
+              <text x={left + state.usableW / 2} y={height - 1} textAnchor="middle" className="fill-gray-500 text-[12px] font-medium">
+                {xLabel}
               </text>
             ) : null}
 
@@ -393,7 +411,8 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
   const profitabilitySeries = (results.profitabilityCurve || []).map((point) => ({
     label: `${point.rate_pct}`,
-    value: Number(point.probability_pct || 0),
+    // Keep the chart intuitive: approach 100% but never touch it.
+    value: Math.max(0, Math.min(99.5, Number(point.probability_pct || 0))),
   }));
 
   const transactionSummary = results.transactionSummary || null;
@@ -507,6 +526,9 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                 valueFormatter={(v) => `${Number(v).toFixed(0)}%`}
                 useSmooth={true}
                 tooltipLabel="Probability"
+                xLabel="Rate (%)"
+                yMinOverride={0}
+                yMaxOverride={100}
               />
             </div>
           )}

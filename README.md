@@ -7,14 +7,15 @@ FYP2026
 
 ```
 404_found_us/
-├── backend/              FastAPI backend — cost calculation, merchant quotes
-├── frontend/             React frontend
-├── ml_service/           ML microservice — Rate Optimisation, TPV Prediction, KNN Rate Quote
+├── backend/              FastAPI backend - cost calculation, merchant quotes
+├── frontend/             Sales React frontend (served at /sales)
+├── merchant-frontend/    Merchant React frontend (served at /merchant)
+├── ml_service/           ML microservice - orchestration + forecasting endpoints
 ├── nginx/                Reverse proxy config
 ├── cost_structure/       Visa/Mastercard card & network fee JSON files
 ├── input_files/          Sample transaction CSV files
 ├── ml_pipeline/          EDA notebooks and modelling analysis
-├── KNN Demo Service/     ⚠️  See note below — do not delete
+├── KNN Demo Service/     See note below - do not delete
 └── docker-compose.yml
 ```
 
@@ -65,7 +66,7 @@ The script is safe to re-run — it uses `if_exists="replace"` so it will overwr
 
 | Service | Base URL | Docs |
 |---|---|---|
-| Backend | `http://localhost/api/v1` | `http://localhost/api/docs` |
+| Backend | `http://localhost/api/v1` | `http://localhost/api/v1/docs` |
 | ML Service | `http://localhost/ml` | `http://localhost/ml/docs` |
 
 ### Key ML endpoints
@@ -76,6 +77,40 @@ The script is safe to re-run — it uses `if_exists="replace"` so it will overwr
 | `POST` | `/ml/rate-optimisation` | Rate Optimisation Engine |
 | `POST` | `/ml/tpv-prediction` | TPV Prediction Engine |
 | `POST` | `/ml/process` | Runs all three engines in sequence |
+
+### Additional ML endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/ml/getQuote` | KNN quote service endpoint |
+| `POST` | `/ml/getCompositeMerchant` | KNN composite merchant profile endpoint |
+| `POST` | `/ml/GetCostForecast` | Cost forecast service endpoint |
+| `POST` | `/ml/GetVolumeForecast` | Volume forecast service endpoint |
+
+---
+
+## Architecture And Mermaid Documentation
+
+Architecture and runtime diagrams are maintained in [presentation/README.md](presentation/README.md).
+
+- Markdown Mermaid sources: [presentation](presentation)
+- Browser-friendly diagram pack: [presentation/index.html](presentation/index.html)
+
+Quick local preview:
+
+```bash
+python -m http.server 8000
+```
+
+Then open: `http://localhost:8000/presentation/index.html`
+
+Current `/sales` probability chart behavior (no current rate path):
+
+- Chart title: `Probability of Profitability`
+- Y-axis fixed to `0%` to `100%`
+- Curve approaches an asymptote at `97.5%` (does not touch `100%`)
+- Suggested rate is shown as a vertical marker line
+- X-axis label is `Rate (%)` with de-cluttered "nice" tick labels
 
 ---
 

@@ -279,13 +279,51 @@ def calculate_merchant_fee(data: dict, db: Session = Depends(get_db)):
                 detail="average_transaction_value and monthly_transactions must both be greater than zero",
             )
 
-        synthetic_transactions = [{"amount": avg_ticket}] * txn_count
-        result = MerchantFeeCalculationService.calculate_current_rates(
-            synthetic_transactions,
+        fixed_fee_raw = data.get("fixed_fee")
+        minimum_fee_raw = data.get("minimum_fee")
+        fixed_fee = 0.30 if fixed_fee_raw is None else float(fixed_fee_raw)
+        minimum_fee = 0.0 if minimum_fee_raw is None else float(minimum_fee_raw)
+        base_cost_rate = MerchantFeeCalculationService.estimate_base_cost_rate(
             mcc,
-            data.get("current_rate"),
-            data.get("fixed_fee", 0.30),
+            avg_ticket=avg_ticket,
+            monthly_txn_count=txn_count,
         )
+        if base_cost_rate is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unable to derive base cost rate from cost structure JSON for MCC {mcc}",
+            )
+
+        current_rate = data.get("current_rate")
+        if current_rate is None:
+            current_rate = float(base_cost_rate) + MerchantFeeCalculationService.DEFAULT_QUOTE_MARGIN_RATE
+        else:
+            try:
+                current_rate = float(current_rate)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="current_rate must be numeric")
+
+        total_volume = avg_ticket * txn_count
+        per_tx_fee = max((avg_ticket * current_rate) + fixed_fee, minimum_fee)
+        total_fees = per_tx_fee * txn_count
+        effective_rate = (total_fees / total_volume) if total_volume > 0 else 0.0
+        margin_rate = current_rate - float(base_cost_rate)
+
+        result = {
+            "success": True,
+            "transaction_count": txn_count,
+            "total_volume": float(total_volume),
+            "total_fees": float(total_fees),
+            "effective_rate": float(effective_rate),
+            "average_ticket": float(avg_ticket),
+            "mcc": mcc,
+            "base_cost_rate": float(base_cost_rate),
+            "applied_rate": float(current_rate),
+            "margin_rate": float(margin_rate),
+            "margin_bps": int(round(margin_rate * 10000)),
+            "fixed_fee": float(fixed_fee),
+            "minimum_fee": float(minimum_fee),
+        }
     else:
         if not transactions:
             raise HTTPException(
@@ -293,11 +331,17 @@ def calculate_merchant_fee(data: dict, db: Session = Depends(get_db)):
                 detail="Provide either transactions or (average_transaction_value + monthly_transactions)",
             )
 
+        fixed_fee_raw = data.get("fixed_fee")
+        minimum_fee_raw = data.get("minimum_fee")
+        fixed_fee = 0.30 if fixed_fee_raw is None else float(fixed_fee_raw)
+        minimum_fee = 0.0 if minimum_fee_raw is None else float(minimum_fee_raw)
+
         result = MerchantFeeCalculationService.calculate_current_rates(
             transactions,
             mcc,
             data.get("current_rate"),
-            data.get("fixed_fee", 0.30),
+            fixed_fee,
+            minimum_fee,
         )
 
     if "error" in result:
@@ -379,7 +423,18 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="current_rate must be numeric")
 
     def _base_rate_for_mcc(code: int) -> float:
-        return float(MerchantFeeCalculationService.MCC_RATES.get(str(code), {}).get("base_rate", 0.025))
+        derived = MerchantFeeCalculationService.estimate_base_cost_rate(
+            code,
+            transactions=transactions if transactions else None,
+            avg_ticket=avg_transaction_value,
+            monthly_txn_count=monthly_transactions,
+        )
+        if derived is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unable to derive base cost rate from cost structure JSON for MCC {code}",
+            )
+        return float(derived)
     avg_transaction_value = data.get("average_transaction_value")
     monthly_transactions = data.get("monthly_transactions")
 
@@ -402,7 +457,8 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             )
 
         total_volume = avg_ticket * txn_count
-        minimum_fee = float(data.get("fixed_fee", 0.30) or 0.30)
+        fixed_fee_raw = data.get("fixed_fee")
+        minimum_fee = 0.0 if fixed_fee_raw is None else float(fixed_fee_raw)
         base_cost_rate = _base_rate_for_mcc(mcc_int)
         if current_rate is not None:
             recommended_rate = current_rate
@@ -438,10 +494,14 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             (current_rate - base_cost_rate) if current_rate is not None else desired_margin
         )
 
+        fixed_fee_raw = data.get("fixed_fee")
+        minimum_fee = 0.0 if fixed_fee_raw is None else float(fixed_fee_raw)
+
         result = MerchantFeeCalculationService.calculate_desired_margin(
             transactions,
             mcc_int,
             desired_margin_for_calc,
+            minimum_fee,
         )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
@@ -524,6 +584,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     profitability_curve = []
     estimated_profit_min = None
     estimated_profit_max = None
+    summary_profitability_pct = None
     ml_context = None
 
     if pipeline is not None:
@@ -561,20 +622,41 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         if paired_len > 0:
             low_total = 0.0
             high_total = 0.0
+            mid_total_revenue = 0.0
+            mid_total_profit = 0.0
             for idx in range(paired_len):
                 c = cost_series[idx]
                 v = volume_series[idx]
                 # Cost percentages cannot be negative; clip forecast bands before profitability math.
                 c_lower = max(0.0, c["lower"])
                 c_upper = max(c_lower, c["upper"])
+                c_mid = max(0.0, c["mid"])
                 low_total += v["lower"] * (recommended_rate - c_upper)
                 high_total += v["upper"] * (recommended_rate - c_lower)
-            estimated_profit_min = low_total
-            estimated_profit_max = high_total
+                mid_total_profit += v["mid"] * (recommended_rate - c_mid)
+                mid_total_revenue += v["mid"] * recommended_rate
+
+            # Keep summary range consistent with curve economics by including
+            # fixed-fee contribution across the same forecast horizon.
+            fixed_fee_per_txn = _safe_float(result.get("minimum_fee"), 0.0)
+            total_txn_count = _safe_float(result.get("transaction_count"), 0.0)
+            weekly_txn_count = total_txn_count / 4.345 if total_txn_count > 0 else 0.0
+            horizon_fixed_fee = fixed_fee_per_txn * weekly_txn_count * paired_len
+            low_total += horizon_fixed_fee
+            high_total += horizon_fixed_fee
+            mid_total_profit += horizon_fixed_fee
+            mid_total_revenue += horizon_fixed_fee
+
+            estimated_profit_min = min(low_total, high_total)
+            estimated_profit_max = max(low_total, high_total)
+
+            if mid_total_revenue > 0:
+                summary_profitability_pct = max(-100.0, min(100.0, (mid_total_profit / mid_total_revenue) * 100.0))
 
             default_rate_grid = [
                 1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
             ]
+            recommended_rate_pct = round(recommended_rate * 100.0, 2)
             user_grid = data.get("rate_grid_pct")
             if isinstance(user_grid, list) and user_grid:
                 rate_grid = []
@@ -588,26 +670,61 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             else:
                 rate_grid = default_rate_grid
 
+            # Keep the chart interpretable by always plotting the exact suggested rate.
+            if recommended_rate_pct not in rate_grid:
+                rate_grid.append(recommended_rate_pct)
+            rate_grid = sorted(set(rate_grid))
+
             for rate_pct in rate_grid:
                 rate_decimal = rate_pct / 100.0
-                week_probabilities = []
-                for c in cost_series[:paired_len]:
-                    # Clip negative costs and keep a minimum variance floor to avoid
-                    # unrealistically flat 100% curves from overconfident forecasts.
-                    mean = max(0.0, c["mid"])
-                    c_lower = max(0.0, c["lower"])
-                    c_upper = max(c_lower, c["upper"])
-                    std_from_ci = abs(c_upper - c_lower) / 3.92
-                    std_dev = max(std_from_ci, abs(mean) * 0.10, 0.008)
-                    # P(cost <= quoted rate) == P(profitability >= 0)
-                    probability = MerchantQuoteService.normal_cdf(rate_decimal, mean, std_dev)
-                    week_probabilities.append(max(0.0, min(1.0, probability)))
+                low_total_rate = 0.0
+                high_total_rate = 0.0
+                mid_total_rate = 0.0
+                total_mid_volume = 0.0
+                total_mid_revenue = 0.0
 
-                probability_pct = (sum(week_probabilities) / len(week_probabilities)) * 100.0
+                for idx in range(paired_len):
+                    c = cost_series[idx]
+                    v = volume_series[idx]
+                    c_lower = max(0.0, c["lower"])
+                    c_mid = max(0.0, c["mid"])
+                    c_upper = max(c_lower, c["upper"])
+
+                    low_total_rate += v["lower"] * (rate_decimal - c_upper)
+                    high_total_rate += v["upper"] * (rate_decimal - c_lower)
+                    mid_total_rate += v["mid"] * (rate_decimal - c_mid)
+                    total_mid_volume += max(0.0, v["mid"])
+                    total_mid_revenue += max(0.0, v["mid"]) * rate_decimal
+
+                # Include fixed-fee contribution so curve matches front-card economics.
+                fixed_fee_per_txn = _safe_float(result.get("minimum_fee"), 0.0)
+                total_txn_count = _safe_float(result.get("transaction_count"), 0.0)
+                weekly_txn_count = total_txn_count / 4.345 if total_txn_count > 0 else 0.0
+                horizon_fixed_fee = fixed_fee_per_txn * weekly_txn_count * paired_len
+
+                low_total_rate += horizon_fixed_fee
+                high_total_rate += horizon_fixed_fee
+                mid_total_rate += horizon_fixed_fee
+                total_mid_revenue += horizon_fixed_fee
+
+                # Avoid probability saturation at exactly 0/100 by introducing a
+                # minimum uncertainty band tied to projected revenue.
+                spread_band = max(
+                    (high_total_rate - low_total_rate) / 2.0,
+                    total_mid_revenue * 0.08,
+                    1e-9,
+                )
+                probability_pct = MerchantQuoteService.normal_cdf(mid_total_rate, 0.0, spread_band) * 100.0
+
+                profitability_pct = 0.0
+                if total_mid_volume > 0:
+                    profitability_pct = (mid_total_rate / total_mid_volume) * 100.0
+
                 profitability_curve.append(
                     {
                         "rate_pct": round(rate_pct, 2),
-                        "probability_pct": round(probability_pct, 2),
+                        "probability_pct": round(max(0.0, min(100.0, probability_pct)), 2),
+                        "profitability_pct": round(profitability_pct, 2),
                     }
                 )
 
@@ -627,11 +744,13 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         default_rate_grid = [
             1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
         ]
-        base_rate_for_curve = _safe_float(result.get("base_cost_rate"), _base_rate_for_mcc(mcc_int))
-        std_dev = 0.004  # 40 bps proxy spread around baseline cost
+        # Anchor around the recommended rate so fallback probability remains shaped
+        # and monotonic rather than flattening at 100% for all quoted rates.
+        anchor_rate = _safe_float(result.get("recommended_rate"), recommended_rate)
+        std_dev = 0.0045  # 45 bps spread around anchor rate
         for rate_pct in default_rate_grid:
             rate_decimal = rate_pct / 100.0
-            probability = MerchantQuoteService.normal_cdf(rate_decimal, base_rate_for_curve, std_dev)
+            probability = MerchantQuoteService.normal_cdf(rate_decimal, anchor_rate, std_dev)
             profitability_curve.append(
                 {
                     "rate_pct": round(rate_pct, 2),
@@ -640,6 +759,15 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             )
 
     fallback_profit = _safe_float(result.get("estimated_total_fees"), 0.0)
+    if summary_profitability_pct is None:
+        base_rate = _safe_float(result.get("base_cost_rate"), 0.0)
+        total_volume = _safe_float(result.get("total_volume"), 0.0)
+        total_fees = _safe_float(result.get("estimated_total_fees"), 0.0)
+        fallback_profitability = (recommended_rate - base_rate) * total_volume
+        fallback_profitability += _safe_float(result.get("minimum_fee"), 0.0) * _safe_float(result.get("transaction_count"), 0.0)
+        if total_fees > 0:
+            summary_profitability_pct = max(-100.0, min(100.0, (fallback_profitability / total_fees) * 100.0))
+
     if (
         estimated_profit_max is not None
         and fallback_profit > 0
@@ -657,6 +785,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         "margin_bps": int(round(margin_rate_for_summary * 10000.0)),
         "estimated_profit_min": round(estimated_profit_min if estimated_profit_min is not None else fallback_profit, 2),
         "estimated_profit_max": round(estimated_profit_max if estimated_profit_max is not None else fallback_profit, 2),
+        "profitability_pct": round(summary_profitability_pct, 2) if summary_profitability_pct is not None else None,
     }
 
     return {

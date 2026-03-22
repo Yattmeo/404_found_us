@@ -5,6 +5,7 @@ import csv
 import io
 from decimal import Decimal
 from validators import TransactionValidator, MerchantValidator
+from modules.cost_calculation.service import CostCalculationService
 
 class DataProcessingService:
     """Service to process and validate uploaded data"""
@@ -112,15 +113,132 @@ class MerchantFeeCalculationService:
 
     # Default quote margin applied when caller does not provide a current/quoted rate.
     DEFAULT_QUOTE_MARGIN_RATE = 0.003  # 30 bps
-    
-    # Standard MCC-based fee rates
-    MCC_RATES = {
-        '5812': {'description': 'Eating Places and Restaurants', 'base_rate': 0.029, 'fixed_fee': 0.30},
-        '5411': {'description': 'Grocery Stores', 'base_rate': 0.020, 'fixed_fee': 0.00},
-        '5541': {'description': 'Service Stations', 'base_rate': 0.025, 'fixed_fee': 0.00},
-        '5311': {'description': 'Department Stores', 'base_rate': 0.023, 'fixed_fee': 0.15},
-        '7011': {'description': 'Hotels and Motels', 'base_rate': 0.028, 'fixed_fee': 0.25},
-    }
+
+    @staticmethod
+    def _normalize_card_brand(value):
+        text = str(value or '').strip().lower()
+        if text == 'visa':
+            return 'Visa'
+        if text in ('mastercard', 'master card'):
+            return 'Mastercard'
+        return None
+
+    @staticmethod
+    def _normalize_card_type(value):
+        text = str(value or '').strip().lower()
+        mapping = {
+            'credit': 'Credit',
+            'super premium credit': 'Super Premium Credit',
+            'debit': 'Debit',
+            'prepaid': 'Prepaid',
+            'debit (prepaid)': 'Prepaid',
+        }
+        return mapping.get(text)
+
+    @staticmethod
+    def _resolve_brand_type_from_tx(tx):
+        raw_brand = tx.get('card_brand')
+        raw_type = tx.get('card_type')
+
+        brand = MerchantFeeCalculationService._normalize_card_brand(raw_brand)
+        card_type = MerchantFeeCalculationService._normalize_card_type(raw_type)
+
+        # Common CSV shape in this project uses card_type as brand (Visa/Mastercard).
+        if brand is None:
+            brand = MerchantFeeCalculationService._normalize_card_brand(raw_type)
+        if card_type is None and brand is not None:
+            card_type = 'Credit'
+
+        return brand, card_type
+
+    @staticmethod
+    def _effective_rate_from_fees(amount, card_fee, network_fee):
+        if amount <= 0:
+            return None
+        card_cost = 0.0
+        network_cost = 0.0
+
+        if card_fee:
+            card_cost = CostCalculationService._calc_cost(
+                amount,
+                card_fee.get('percent_rate', 0.0),
+                card_fee.get('fixed_rate', 0.0),
+                card_fee.get('max_fee'),
+            )
+        if network_fee:
+            network_cost = CostCalculationService._calc_cost(
+                amount,
+                network_fee.get('percent_rate', 0.0),
+                network_fee.get('fixed_rate', 0.0),
+            )
+
+        return (card_cost + network_cost) / amount
+
+    @staticmethod
+    def estimate_base_cost_rate(mcc, transactions=None, avg_ticket=None, monthly_txn_count=None):
+        """
+        Estimate a baseline processing cost rate (decimal) strictly from cost_structure JSON data.
+        """
+        try:
+            mcc_int = int(mcc)
+        except (TypeError, ValueError):
+            return None
+
+        tx_rows = transactions or []
+        total_cost = 0.0
+        total_amount = 0.0
+
+        for tx in tx_rows:
+            amount = float(tx.get('amount', 0) or 0)
+            if amount <= 0:
+                continue
+
+            brand, card_type = MerchantFeeCalculationService._resolve_brand_type_from_tx(tx)
+            brand_candidates = [brand] if brand else ['Visa', 'Mastercard']
+            type_candidates = [card_type] if card_type else ['Credit']
+
+            scenario_rates = []
+            for b in brand_candidates:
+                for ctype in type_candidates:
+                    card_fee = CostCalculationService._find_matching_card_fee(b, ctype, mcc_int, amount)
+                    network_fee = CostCalculationService._find_matching_network_fee(b, ctype, amount)
+                    rate = MerchantFeeCalculationService._effective_rate_from_fees(amount, card_fee, network_fee)
+                    if rate is not None:
+                        scenario_rates.append(rate)
+
+            if scenario_rates:
+                total_cost += amount * (sum(scenario_rates) / len(scenario_rates))
+                total_amount += amount
+
+        if total_amount > 0:
+            return total_cost / total_amount
+
+        # Aggregate fallback: derive from JSON entries for this MCC at a representative ticket size.
+        representative_amount = float(avg_ticket or 100.0)
+        if representative_amount <= 0:
+            representative_amount = 100.0
+
+        blended_rates = []
+        for brand in ('Visa', 'Mastercard'):
+            fee_structure = CostCalculationService._load_fee_structure(brand) or []
+            product = 'Small Ticket Fee Program (All)' if representative_amount < 5.0 else 'Industry Fee Program (All)'
+            rows = [
+                row for row in fee_structure
+                if row.get('product') == product and (row.get('mcc') == mcc_int if product.startswith('Industry') else True)
+            ]
+            for row in rows:
+                ctype = row.get('card_type')
+                if not ctype:
+                    continue
+                network_fee = CostCalculationService._find_matching_network_fee(brand, ctype, representative_amount)
+                rate = MerchantFeeCalculationService._effective_rate_from_fees(representative_amount, row, network_fee)
+                if rate is not None:
+                    blended_rates.append(rate)
+
+        if blended_rates:
+            return sum(blended_rates) / len(blended_rates)
+
+        return None
 
     @staticmethod
     def calculate_current_rates(transactions, mcc, current_rate=None, fixed_fee=0.30, minimum_fee=0.00):
@@ -139,9 +257,10 @@ class MerchantFeeCalculationService:
         if not transactions:
             return {'error': 'No transactions provided'}
         
-        # Get baseline cost rate from MCC and derive margin from the quoted rate.
-        mcc_data = MerchantFeeCalculationService.MCC_RATES.get(str(mcc), {})
-        base_cost_rate = mcc_data.get('base_rate', 0.025)
+        # Derive baseline cost rate from JSON fee structures (card + network).
+        base_cost_rate = MerchantFeeCalculationService.estimate_base_cost_rate(mcc, transactions=transactions)
+        if base_cost_rate is None:
+            return {'error': 'Unable to derive base cost rate from cost structure data'}
         if current_rate is None:
             current_rate = float(base_cost_rate) + MerchantFeeCalculationService.DEFAULT_QUOTE_MARGIN_RATE
 
@@ -213,10 +332,11 @@ class MerchantFeeCalculationService:
         if total_volume <= 0:
             return {'error': 'Total transaction volume must be greater than zero'}
         
-        # Quoted rate should be cost + margin.
-        # Use the MCC base rate as baseline cost when available.
-        mcc_data = MerchantFeeCalculationService.MCC_RATES.get(str(mcc), {})
-        base_cost_rate = Decimal(str(mcc_data.get('base_rate', 0.025)))
+        # Quoted rate should be cost + margin from JSON fee structures.
+        base_rate = MerchantFeeCalculationService.estimate_base_cost_rate(mcc, transactions=transactions)
+        if base_rate is None:
+            return {'error': 'Unable to derive base cost rate from cost structure data'}
+        base_cost_rate = Decimal(str(base_rate))
         margin_rate = Decimal(str(desired_margin))
         required_rate = base_cost_rate + margin_rate
         average_ticket = total_volume / Decimal(str(transaction_count)) if transaction_count > 0 else Decimal('0')

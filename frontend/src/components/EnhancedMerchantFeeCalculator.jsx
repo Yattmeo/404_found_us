@@ -32,16 +32,36 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
   const mccValue = watch('mcc');
   const fixedFee = watch('fixedFee');
 
+  const clampProfitabilityPct = (value) => {
+    if (!Number.isFinite(value)) return null;
+    return Number(Math.max(-100, Math.min(100, value)).toFixed(2));
+  };
+
   const normalizeCurrentRateResults = (apiPayload, formData, txCount, avgTicket, totalAmount) => {
     const envelope = apiPayload || {};
     const data = envelope?.data || {};
     const suggestedRate = typeof data?.applied_rate === 'number' ? data.applied_rate * 100 : null;
     const marginBps = typeof data?.margin_bps === 'number' ? data.margin_bps : null;
 
-    const estimatedProfit =
+    const transactionCountForProfit =
+      typeof data?.transaction_count === 'number' ? data.transaction_count : txCount;
+    const fixedFeePerTxn =
+      typeof data?.fixed_fee === 'number'
+        ? data.fixed_fee
+        : (formData.fixedFee !== '' && formData.fixedFee !== undefined ? Number(formData.fixedFee) : 0.30);
+
+    const variableProfit =
       typeof data?.margin_rate === 'number' && typeof data?.total_volume === 'number'
         ? data.total_volume * data.margin_rate
         : null;
+    const fixedFeeContribution =
+      typeof transactionCountForProfit === 'number' && Number.isFinite(fixedFeePerTxn)
+        ? transactionCountForProfit * fixedFeePerTxn
+        : 0;
+
+    // Include both rate margin and fixed-fee contribution so profit mapping matches user inputs.
+    const estimatedProfit =
+      typeof variableProfit === 'number' ? variableProfit + fixedFeeContribution : null;
     const estimatedProfitMin = typeof estimatedProfit === 'number' ? estimatedProfit * 0.9 : null;
     const estimatedProfitMax = typeof estimatedProfit === 'number' ? estimatedProfit * 1.1 : null;
 
@@ -57,14 +77,15 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
         : (typeof data?.calculation?.total_volume === 'number' ? data.calculation.total_volume : totalAmount);
 
     let profitabilityPct = null;
+    const totalFees = typeof data?.total_fees === 'number' ? data.total_fees : null;
     if (
       typeof estimatedProfitMin === 'number' &&
       typeof estimatedProfitMax === 'number' &&
-      typeof processingVolume === 'number' &&
-      processingVolume > 0
+      typeof totalFees === 'number' &&
+      totalFees > 0
     ) {
       const midpointProfit = (estimatedProfitMin + estimatedProfitMax) / 2;
-      profitabilityPct = Number(((midpointProfit / processingVolume) * 100).toFixed(2));
+      profitabilityPct = clampProfitabilityPct((midpointProfit / totalFees) * 100);
     }
 
     const averageTransactionSize =
@@ -108,28 +129,58 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
     const envelope = apiPayload || {};
     const data = envelope?.data || {};
     const summary = data?.summary || {};
+    const calculation = data?.calculation || {};
     const transactionSummary = data?.transaction_summary || {};
     const profitabilityCurve = Array.isArray(data?.profitability_curve) ? data.profitability_curve : [];
+    const volumeForecast = Array.isArray(data?.volume_forecast) ? data.volume_forecast : [];
 
-    const suggestedRate = typeof summary.suggested_rate_pct === 'number' ? summary.suggested_rate_pct : null;
-    const marginBps = typeof summary.margin_bps === 'number' ? summary.margin_bps : null;
-    const estimatedProfitMin = typeof summary.estimated_profit_min === 'number' ? summary.estimated_profit_min : null;
-    const estimatedProfitMax = typeof summary.estimated_profit_max === 'number' ? summary.estimated_profit_max : null;
+    let suggestedRate = typeof summary.suggested_rate_pct === 'number' ? summary.suggested_rate_pct : null;
+    if (suggestedRate === null && typeof calculation?.recommended_rate === 'number') {
+      suggestedRate = calculation.recommended_rate * 100;
+    }
+
+    let marginBps = typeof summary.margin_bps === 'number' ? summary.margin_bps : null;
+    if (
+      marginBps === null &&
+      typeof calculation?.recommended_rate === 'number' &&
+      typeof calculation?.base_cost_rate === 'number'
+    ) {
+      marginBps = Math.round((calculation.recommended_rate - calculation.base_cost_rate) * 10000);
+    }
+
+    let estimatedProfitMin = typeof summary.estimated_profit_min === 'number' ? summary.estimated_profit_min : null;
+    let estimatedProfitMax = typeof summary.estimated_profit_max === 'number' ? summary.estimated_profit_max : null;
+    if (
+      (estimatedProfitMin === null || estimatedProfitMax === null) &&
+      typeof calculation?.estimated_total_fees === 'number'
+    ) {
+      estimatedProfitMin = calculation.estimated_total_fees * 0.9;
+      estimatedProfitMax = calculation.estimated_total_fees * 1.1;
+    }
 
     const processingVolume =
       typeof transactionSummary.total_volume === 'number'
         ? transactionSummary.total_volume
         : (typeof data?.calculation?.total_volume === 'number' ? data.calculation.total_volume : totalAmount);
 
+    const forecastHorizonVolume = volumeForecast.reduce((sum, point) => {
+      const mid = Number(point?.mid);
+      return Number.isFinite(mid) && mid > 0 ? sum + mid : sum;
+    }, 0);
+
+    const profitabilityDenominator = forecastHorizonVolume > 0 ? forecastHorizonVolume : processingVolume;
+
     let profitabilityPct = null;
-    if (
+    if (typeof summary?.profitability_pct === 'number') {
+      profitabilityPct = clampProfitabilityPct(summary.profitability_pct);
+    } else if (
       typeof estimatedProfitMin === 'number' &&
       typeof estimatedProfitMax === 'number' &&
-      typeof processingVolume === 'number' &&
-      processingVolume > 0
+      typeof profitabilityDenominator === 'number' &&
+      profitabilityDenominator > 0
     ) {
       const midpointProfit = (estimatedProfitMin + estimatedProfitMax) / 2;
-      profitabilityPct = Number(((midpointProfit / processingVolume) * 100).toFixed(2));
+      profitabilityPct = clampProfitabilityPct((midpointProfit / profitabilityDenominator) * 100);
     }
 
     const averageTransactionSize =
@@ -161,11 +212,11 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       transactionCount,
       currentRateProvided: !!formData.currentRate,
       costForecast: Array.isArray(data?.cost_forecast) ? data.cost_forecast : [],
-      volumeForecast: Array.isArray(data?.volume_forecast) ? data.volume_forecast : [],
+      volumeForecast,
       profitabilityCurve,
       mlContext: data?.ml_context || null,
       transactionSummary,
-      calculation: data?.calculation || null,
+      calculation,
     };
   };
 
@@ -226,7 +277,10 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
           mcc: data.mcc,
           average_transaction_value: avgTicket,
           monthly_transactions: txCount,
-          fixed_fee: payload.fixed_fee,
+          fixed_fee:
+            data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
+              ? 0.0
+              : payload.fixed_fee,
           desired_margin: 0.015,
           transactions: [],
         };
@@ -235,12 +289,35 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       }
     } catch (error) {
       console.error('Calculation error:', error);
-      // TODO: Remove this fallback once backend API is fully implemented
-      // Calculate what we can from available transaction summary
       const { txCount, totalAmount, avgTicket } = computeTransactionMetrics(transactionData);
+
+      if (!(data.currentRate !== '' && data.currentRate !== undefined)) {
+        try {
+          const fixedFeeFallback =
+            data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
+              ? 0.0
+              : parseFloat(data.fixedFee);
+
+          const fallbackPayload = {
+            mcc: data.mcc,
+            average_transaction_value: avgTicket,
+            monthly_transactions: txCount,
+            fixed_fee: Number.isFinite(fixedFeeFallback) ? fixedFeeFallback : 0.0,
+            current_rate: null,
+            transactions: [],
+          };
+
+          const fallbackApiResults = await merchantFeeAPI.calculateCurrentRates(fallbackPayload);
+          setResults(normalizeCurrentRateResults(fallbackApiResults, data, txCount, avgTicket, totalAmount));
+          return;
+        } catch (fallbackError) {
+          console.error('Fallback current-rate calculation error:', fallbackError);
+        }
+      }
+
+      // Last-resort UI fallback with transaction-derived values only.
       
       const mockResults = {
-        // TEMPORARY: These should come from backend cost engine model
         suggestedRate: null, // Backend should calculate based on MCC, volume, and desired margin
         margin: null, // Backend should calculate margin in bps
         estimatedProfit: null, // Backend should calculate based on rate and volume

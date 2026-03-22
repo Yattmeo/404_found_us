@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -34,23 +35,25 @@ class CostCalculationService:
     # ------------------------------------------------------------------ loaders
 
     @staticmethod
+    @lru_cache(maxsize=16)
+    def _load_json_cached(path_str: str):
+        with open(path_str, encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
     def _load_fee_structure(card_brand: str):
         if card_brand == "Mastercard":
-            with open(MASTERCARD_FEE_FILE) as f:
-                return json.load(f)
+            return CostCalculationService._load_json_cached(str(MASTERCARD_FEE_FILE))
         elif card_brand == "Visa":
-            with open(VISA_FEE_FILE) as f:
-                return json.load(f)
+            return CostCalculationService._load_json_cached(str(VISA_FEE_FILE))
         return None  # Amex / unknown — no fee structure available
 
     @staticmethod
     def _load_network_fee_structure(card_brand: str):
         if card_brand == "Mastercard":
-            with open(MASTERCARD_NETWORK_FILE) as f:
-                return json.load(f)
+            return CostCalculationService._load_json_cached(str(MASTERCARD_NETWORK_FILE))
         elif card_brand == "Visa":
-            with open(VISA_NETWORK_FILE) as f:
-                return json.load(f)
+            return CostCalculationService._load_json_cached(str(VISA_NETWORK_FILE))
         return None
 
     # ------------------------------------------------------------------ helpers

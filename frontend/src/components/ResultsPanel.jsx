@@ -34,6 +34,39 @@ const buildSmoothPath = (coords) => {
   return path;
 };
 
+const PROBABILITY_ASYMPTOTE_MAX = 97.5;
+
+const smoothMonotonicSeries = (points) => {
+  if (!Array.isArray(points) || points.length < 3) return points || [];
+
+  const smoothed = points.map((point, index) => {
+    const current = Number(point.y);
+    if (index === 0 || index === points.length - 1 || !Number.isFinite(current)) {
+      return { ...point, y: Number.isFinite(current) ? current : 0 };
+    }
+
+    const prev = Number(points[index - 1].y);
+    const next = Number(points[index + 1].y);
+    const weighted = (prev + (2 * current) + next) / 4;
+    return { ...point, y: Number.isFinite(weighted) ? weighted : current };
+  });
+
+  let runningMax = 0;
+  return smoothed.map((point) => {
+    const clamped = Math.max(0, Math.min(PROBABILITY_ASYMPTOTE_MAX, Number(point.y)));
+    runningMax = Math.max(runningMax, clamped);
+    return { ...point, y: Number(runningMax.toFixed(2)) };
+  });
+};
+
+const asymptoticCurveValue = (rawPercent) => {
+  const clamped = Math.max(0, Math.min(PROBABILITY_ASYMPTOTE_MAX, Number(rawPercent) || 0));
+  const p = clamped / 100;
+  // Concave transform: rises fast early, then flattens near the top asymptote.
+  const eased = 1 - Math.pow(1 - p, 1.6);
+  return Number((eased * PROBABILITY_ASYMPTOTE_MAX).toFixed(2));
+};
+
 const buildFallbackCostSeries = (baseRatePct) => {
   const now = new Date();
   const weeklyLabels = [];
@@ -161,12 +194,23 @@ const SarimaMiniChart = ({ series }) => {
   );
 };
 
-const ProbabilityMiniChart = ({ points }) => {
+const ProbabilityMiniChart = ({
+  points,
+  title = 'Probability of Profitability',
+  yLabel = 'Probability (%)',
+  xLabel = 'Rate (%)',
+  valueFormatter = (v) => `${Number(v).toFixed(0)}%`,
+  fixedPercentScale = true,
+  yMinOverride = null,
+  yMaxOverride = null,
+  markerX = null,
+  markerLabel = null,
+}) => {
   const chartPoints = Array.isArray(points) ? points : [];
   if (!chartPoints.length) {
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">Probability of Profitability</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-3">{title}</h3>
         <p className="text-sm text-gray-500">No probability data available yet.</p>
       </div>
     );
@@ -183,8 +227,29 @@ const ProbabilityMiniChart = ({ points }) => {
 
   const minX = Math.min(...chartPoints.map((p) => Number(p.x)));
   const maxX = Math.max(...chartPoints.map((p) => Number(p.x)));
-  const minY = 0;
-  const maxY = 100;
+  let minY = 0;
+  let maxY = 100;
+  if (Number.isFinite(yMinOverride) && Number.isFinite(yMaxOverride) && yMaxOverride > yMinOverride) {
+    minY = Number(yMinOverride);
+    maxY = Number(yMaxOverride);
+  }
+  if (!fixedPercentScale && !(Number.isFinite(yMinOverride) && Number.isFinite(yMaxOverride) && yMaxOverride > yMinOverride)) {
+    const ys = chartPoints.map((p) => Number(p.y)).filter(Number.isFinite);
+    if (ys.length > 0) {
+      minY = Math.min(...ys);
+      maxY = Math.max(...ys);
+      if (minY === maxY) {
+        const pad = Math.max(Math.abs(minY) * 0.1, 0.2);
+        minY -= pad;
+        maxY += pad;
+      } else {
+        const span = maxY - minY;
+        const pad = Math.max(span * 0.15, 0.2);
+        minY -= pad;
+        maxY += pad;
+      }
+    }
+  }
 
   const coords = chartPoints.map((p, idx) => {
     const x = left + (usableW * (chartPoints.length === 1 ? 0.5 : (Number(p.x) - minX) / ((maxX - minX) || 1)));
@@ -192,11 +257,49 @@ const ProbabilityMiniChart = ({ points }) => {
     return { x, y, label: p.label, value: p.y };
   });
 
-  const path = coords.length ? `M ${coords.map((c) => `${c.x} ${c.y}`).join(' L ')}` : '';
+  const xTicks = (() => {
+    const span = Math.max(0.0001, maxX - minX);
+    const targetTicks = 8;
+    const rawStep = span / targetTicks;
+    const niceSteps = [0.1, 0.2, 0.25, 0.5, 1, 2];
+    const step = niceSteps.find((s) => s >= rawStep) || 2;
+
+    const start = Math.floor(minX / step) * step;
+    const end = Math.ceil(maxX / step) * step;
+    const ticks = [];
+    for (let v = start; v <= end + 1e-9; v += step) {
+      if (v >= minX - 1e-9 && v <= maxX + 1e-9) {
+        const rounded = Number(v.toFixed(4));
+        const x = left + (usableW * ((rounded - minX) / (span || 1)));
+        ticks.push({ value: rounded, x });
+      }
+    }
+    return ticks;
+  })();
+
+  const path = buildSmoothPath(coords);
+
+  const markerCoord = (() => {
+    if (!Number.isFinite(markerX)) return null;
+    if (markerX < minX || markerX > maxX) return null;
+    const x = left + (usableW * (chartPoints.length === 1 ? 0.5 : (Number(markerX) - minX) / ((maxX - minX) || 1)));
+    return { x };
+  })();
+
+  const markerLabelMeta = (() => {
+    if (!markerCoord || !markerLabel) return null;
+    if (markerCoord.x > (width - right - 56)) {
+      return { x: markerCoord.x - 8, anchor: 'end' };
+    }
+    if (markerCoord.x < (left + 56)) {
+      return { x: markerCoord.x + 8, anchor: 'start' };
+    }
+    return { x: markerCoord.x, anchor: 'middle' };
+  })();
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 md:p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Probability of Profitability</h3>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
       <div className="w-full overflow-x-auto">
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full min-w-[500px]">
           {[0, 1, 2, 3, 4].map((t) => {
@@ -206,19 +309,47 @@ const ProbabilityMiniChart = ({ points }) => {
           <line x1={left} y1={top + usableH} x2={width - right} y2={top + usableH} stroke="#9CA3AF" strokeWidth="1.2" />
           <line x1={left} y1={top} x2={left} y2={top + usableH} stroke="#9CA3AF" strokeWidth="1.2" />
 
+          {markerCoord ? (
+            <line
+              x1={markerCoord.x}
+              y1={top}
+              x2={markerCoord.x}
+              y2={top + usableH}
+              stroke="#0F766E"
+              strokeWidth="1.5"
+              strokeDasharray="6 4"
+            />
+          ) : null}
+
           <path d={path} fill="none" stroke="#F97316" strokeWidth="2.75" />
           {coords.map((c) => (
             <circle key={`p-${c.label}`} cx={c.x} cy={c.y} r="4" fill="#F97316" />
           ))}
 
-          <text x={left - 8} y={top + 4} textAnchor="end" className="fill-gray-500 text-[11px]">100</text>
-          <text x={left - 8} y={top + usableH + 4} textAnchor="end" className="fill-gray-500 text-[11px]">0</text>
+          {markerCoord && markerLabel && markerLabelMeta ? (
+            <text x={markerLabelMeta.x} y={top - 4} textAnchor={markerLabelMeta.anchor} className="fill-teal-700 text-[11px] font-medium">
+              {markerLabel}
+            </text>
+          ) : null}
 
-          {coords.map((c) => (
-            <text key={`px-${c.label}`} x={c.x} y={height - 12} textAnchor="middle" className="fill-gray-500 text-[11px]">
-              {c.label}
+          <text x={left - 8} y={top + 4} textAnchor="end" className="fill-gray-500 text-[11px]">{valueFormatter(maxY)}</text>
+          <text x={left - 8} y={top + usableH + 4} textAnchor="end" className="fill-gray-500 text-[11px]">{valueFormatter(minY)}</text>
+
+          {xTicks.map((tick) => (
+            <text key={`xt-${tick.value}`} x={tick.x} y={height - 12} textAnchor="middle" className="fill-gray-500 text-[11px]">
+              {Number(tick.value).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}
             </text>
           ))}
+
+          {xLabel ? (
+            <text x={left + (usableW / 2)} y={height - 1} textAnchor="middle" className="fill-gray-500 text-[12px] font-medium">
+              {xLabel}
+            </text>
+          ) : null}
+
+          <text x="20" y={top + usableH / 2} textAnchor="middle" transform={`rotate(-90 20 ${top + usableH / 2})`} className="fill-gray-400 text-[11px]">
+            {yLabel}
+          </text>
         </svg>
       </div>
     </div>
@@ -243,6 +374,167 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
       </div>
     );
   }
+
+  const hasEstimatedProfitRange =
+    results?.estimatedProfitMin !== null && results?.estimatedProfitMin !== undefined &&
+    results?.estimatedProfitMax !== null && results?.estimatedProfitMax !== undefined;
+
+  const getAmountClass = (value) => (Number(value) < 0 ? 'text-red-600' : 'text-[#17a455]');
+
+  const getOrderedProfitRange = () => {
+    if (!hasEstimatedProfitRange) {
+      return null;
+    }
+
+    const first = Number(results.estimatedProfitMin);
+    const second = Number(results.estimatedProfitMax);
+    if (Number.isNaN(first) || Number.isNaN(second)) {
+      return null;
+    }
+
+    return first <= second ? { low: first, high: second } : { low: second, high: first };
+  };
+
+  const orderedProfitRange = getOrderedProfitRange();
+
+  const suggestedRatePct = Number(results?.suggestedRate);
+  const marginBps = Number(results?.margin);
+  const costRatePct =
+    Number.isFinite(suggestedRatePct) && Number.isFinite(marginBps)
+      ? Number((suggestedRatePct - (marginBps / 100)).toFixed(2))
+      : null;
+
+  const noCurrentRateCurveModel = (() => {
+    if (!(Array.isArray(results?.profitabilityCurve) && results.profitabilityCurve.length > 0)) {
+      const fallbackPoints = [
+        { x: 1.5, y: 15, label: '1.5' },
+        { x: 1.75, y: 35, label: '1.75' },
+        { x: 2.0, y: 55, label: '2' },
+        { x: 2.25, y: 75, label: '2.25' },
+        { x: 2.35, y: 90, label: '2.35' },
+        { x: 2.5, y: 93, label: '2.5' },
+        { x: 2.75, y: 95, label: '2.75' },
+        { x: 3.0, y: 97, label: '3' },
+        { x: 3.25, y: 98, label: '3.25' },
+        { x: 3.5, y: 99, label: '3.5' },
+      ];
+
+      return {
+        seriesType: 'probability',
+        points: smoothMonotonicSeries(fallbackPoints.map((p) => ({
+          ...p,
+          y: asymptoticCurveValue(p.y),
+        }))),
+      };
+    }
+
+    const sorted = results.profitabilityCurve
+      .map((point) => ({
+        x: Number(point?.rate_pct),
+        y: Number(point?.probability_pct),
+        profitabilityPct: Number(point?.profitability_pct),
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      .sort((a, b) => a.x - b.x);
+
+    if (sorted.length === 0) {
+      return { seriesType: 'probability', points: [] };
+    }
+
+    const probabilityValues = sorted.map((point) => Math.max(0, Math.min(100, point.y)));
+    const probabilityMin = Math.min(...probabilityValues);
+    const probabilityMax = Math.max(...probabilityValues);
+    const probabilityRange = probabilityMax - probabilityMin;
+
+    const profitabilityValues = sorted
+      .map((point) => point.profitabilityPct)
+      .filter((value) => Number.isFinite(value));
+    const hasProfitabilitySignal = profitabilityValues.length === sorted.length;
+    const profitabilityMin = hasProfitabilitySignal ? Math.min(...profitabilityValues) : null;
+    const profitabilityMax = hasProfitabilitySignal ? Math.max(...profitabilityValues) : null;
+    const profitabilityRange =
+      hasProfitabilitySignal && profitabilityMin !== null && profitabilityMax !== null
+        ? (profitabilityMax - profitabilityMin)
+        : 0;
+
+    // If backend probability is saturated/flat, chart normalized profitability trend instead.
+    if (probabilityRange < 0.5 && hasProfitabilitySignal && profitabilityRange > 1e-6) {
+      let runningMax = 0;
+      const points = sorted.map((point) => {
+        const normalized = ((point.profitabilityPct - profitabilityMin) / profitabilityRange) * 100;
+        const clampedY = asymptoticCurveValue(normalized);
+        runningMax = Math.max(runningMax, clampedY);
+        return {
+          x: point.x,
+          y: Number(runningMax.toFixed(2)),
+          label: point.x.toString(),
+        };
+      });
+      return {
+        seriesType: 'normalized-profitability',
+        points: smoothMonotonicSeries(points),
+      };
+    }
+
+    let runningMax = 0;
+    const points = sorted.map((point) => {
+      const clampedY = asymptoticCurveValue(point.y);
+      runningMax = Math.max(runningMax, clampedY);
+      return {
+        x: point.x,
+        y: runningMax,
+        label: point.x.toString(),
+      };
+    });
+    return {
+      seriesType: 'probability',
+      points: smoothMonotonicSeries(points),
+    };
+  })();
+
+  const noCurrentRateCurvePoints = (() => {
+    let points = Array.isArray(noCurrentRateCurveModel.points) ? [...noCurrentRateCurveModel.points] : [];
+
+    // Rule 1: x-intercept should occur where quoted rate equals estimated cost rate.
+    if (Number.isFinite(costRatePct)) {
+      points.push({ x: costRatePct, y: 0, label: Number(costRatePct).toString() });
+    }
+
+    // Rule 2: extend chart horizon by +1.00% above suggested rate for better quote context.
+    if (Number.isFinite(suggestedRatePct)) {
+      const extendedX = Number((suggestedRatePct + 1.0).toFixed(1));
+      points.push({
+        x: extendedX,
+        y: PROBABILITY_ASYMPTOTE_MAX,
+        label: extendedX.toString(),
+      });
+    }
+
+    // Deduplicate by x, keeping the lower y at the same rate to preserve intercept behavior.
+    const byX = new Map();
+    points.forEach((point) => {
+      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+      const key = Number(point.x).toFixed(2);
+      if (!byX.has(key)) {
+        byX.set(key, { x: Number(key), y: Number(point.y), label: Number(key).toString() });
+      } else {
+        const existing = byX.get(key);
+        existing.y = Math.min(existing.y, Number(point.y));
+      }
+    });
+
+    const sorted = Array.from(byX.values()).sort((a, b) => a.x - b.x);
+
+    // Force all rates at/below cost-rate to 0, then apply asymptotic+monotonic smoothing.
+    const anchored = sorted.map((point) => {
+      if (Number.isFinite(costRatePct) && point.x <= costRatePct) {
+        return { ...point, y: 0 };
+      }
+      return { ...point, y: asymptoticCurveValue(point.y) };
+    });
+
+    return smoothMonotonicSeries(anchored);
+  })();
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -288,14 +580,13 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                 
                 <div>
                   <p className="text-sm font-medium text-gray-700">Estimated Profit:</p>
-                  {results.estimatedProfitMin !== null && results.estimatedProfitMin !== undefined &&
-                  results.estimatedProfitMax !== null && results.estimatedProfitMax !== undefined ? (
+                  {orderedProfitRange ? (
                     <p className="text-3xl font-bold">
-                      <span className={Number(results.estimatedProfitMin) < 0 ? 'text-red-600' : 'text-[#17a455]'}>
-                        {formatCurrency(results.estimatedProfitMin)}
+                      <span className={getAmountClass(orderedProfitRange.low)}>
+                        {formatCurrency(orderedProfitRange.low)}
                       </span>
                       <span className="text-gray-900"> - </span>
-                      <span className="text-[#17a455]">{formatCurrency(results.estimatedProfitMax)}</span>
+                      <span className={getAmountClass(orderedProfitRange.high)}>{formatCurrency(orderedProfitRange.high)}</span>
                     </p>
                   ) : (
                     <p className={`text-2xl font-bold ${Number(results.estimatedProfit || 0) < 0 ? 'text-red-600' : 'text-[#17a455]'}`}>
@@ -391,14 +682,13 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
 
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                 <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
-                {results.estimatedProfitMin !== null && results.estimatedProfitMin !== undefined &&
-                results.estimatedProfitMax !== null && results.estimatedProfitMax !== undefined ? (
+                {orderedProfitRange ? (
                   <p className="text-4xl font-bold">
-                    <span className={Number(results.estimatedProfitMin) < 0 ? 'text-red-600' : 'text-[#17a455]'}>
-                      {formatCurrency(results.estimatedProfitMin)}
+                    <span className={getAmountClass(orderedProfitRange.low)}>
+                      {formatCurrency(orderedProfitRange.low)}
                     </span>
                     <span className="text-gray-900"> - </span>
-                    <span className="text-[#17a455]">{formatCurrency(results.estimatedProfitMax)}</span>
+                    <span className={getAmountClass(orderedProfitRange.high)}>{formatCurrency(orderedProfitRange.high)}</span>
                   </p>
                 ) : (
                   <p className={`text-4xl font-bold ${Number(results.estimatedProfit || 0) < 0 ? 'text-red-600' : 'text-[#17a455]'}`}>
@@ -427,26 +717,20 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
             {/* Right Column */}
             <div className="space-y-6">
               <ProbabilityMiniChart
-                points={
-                  Array.isArray(results.profitabilityCurve) && results.profitabilityCurve.length > 0
-                    ? results.profitabilityCurve.map((point) => ({
-                        x: Number(point.rate_pct || 0),
-                        y: Number(point.probability_pct || 0),
-                        label: Number(point.rate_pct || 0).toString(),
-                      }))
-                    : [
-                        { x: 1.5, y: 15, label: '1.5' },
-                        { x: 1.75, y: 35, label: '1.75' },
-                        { x: 2.0, y: 55, label: '2' },
-                        { x: 2.25, y: 75, label: '2.25' },
-                        { x: 2.35, y: 90, label: '2.35' },
-                        { x: 2.5, y: 93, label: '2.5' },
-                        { x: 2.75, y: 95, label: '2.75' },
-                        { x: 3.0, y: 97, label: '3' },
-                        { x: 3.25, y: 98, label: '3.25' },
-                        { x: 3.5, y: 99, label: '3.5' },
-                      ]
+                title="Probability of Profitability"
+                yLabel="Probability (%)"
+                xLabel="Rate (%)"
+                valueFormatter={(v) => `${Number(v).toFixed(2)}%`}
+                fixedPercentScale
+                yMinOverride={0}
+                yMaxOverride={100}
+                markerX={Number.isFinite(Number(results.suggestedRate)) ? Number(results.suggestedRate) : null}
+                markerLabel={
+                  Number.isFinite(Number(results.suggestedRate))
+                    ? `Suggested ${Number(results.suggestedRate).toFixed(2)}%`
+                    : null
                 }
+                points={noCurrentRateCurvePoints}
               />
             </div>
           </div>
