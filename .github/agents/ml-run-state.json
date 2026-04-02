@@ -1,0 +1,26 @@
+{
+  "goal": "Beat the mean baseline on avg_proc_cost_pct using context_len=6 and horizon_len=3",
+  "steps": [1, 2, 3, 4, 5],
+  "completed_steps": [1, 2, 3, 4, 5],
+  "artifacts": {
+    "data": "X_train_h1, X_train_h2, X_train_h3",
+    "models": "model_h1, model_h2, model_h3",
+    "results": "baseline_mae=1.205736, gbm_mae=1.219429, knn_traj_mae_6=1.450479"
+  },
+  "_log": [
+    {"event": "coordinator_start", "timestamp": "2026-03-22T00:00:00Z", "goal": "Beat the mean baseline on avg_proc_cost_pct using context_len=6 and horizon_len=3"},
+    {"event": "plan_created", "timestamp": "2026-03-22T00:01:00Z", "step_count": 5, "strategy": "GradientBoostingRegressor global supervised, train<2018"},
+    {"event": "critic_refine", "timestamp": "2026-03-22T00:02:00Z", "score": 0.75, "accepted": true, "note": "Prose clarity issues only; logic sound"},
+    {"event": "step_ok", "step_id": 1, "timestamp": "2026-03-22T00:03:00Z", "artifact": "valid_test_scenarios_6"},
+    {"event": "step_ok", "step_id": 2, "timestamp": "2026-03-22T00:04:00Z", "artifact": "mean_baseline_mae_6"},
+    {"event": "step_ok", "step_id": 3, "timestamp": "2026-03-22T00:05:00Z", "artifact": "X_train_h1/h2/h3"},
+    {"event": "step_ok", "step_id": 4, "timestamp": "2026-03-22T00:06:00Z", "artifact": "model_h1, model_h2, model_h3"},
+    {"event": "step_ok", "step_id": 5, "timestamp": "2026-03-22T00:07:00Z", "artifact": "gbm_mae_6"},
+    {"event": "attempt_failed", "attempt": 1, "strategy": "Global GBM (train<2018)", "gbm_mae": 1.219429, "baseline_mae": 1.205736, "improvement_pct": -1.14, "diagnosis": "Distribution shift: pre-2018 training does not generalise to 2018+ test; train R2=0.92 confirms overfitting"},
+    {"event": "step_ok", "step_id": "2A", "timestamp": "2026-03-22T00:08:00Z", "artifact": "predict_knn_trajectory"},
+    {"event": "step_ok", "step_id": "2B", "timestamp": "2026-03-22T00:09:00Z", "artifact": "knn_traj_mae_6"},
+    {"event": "step_ok", "step_id": "3A", "timestamp": "2026-03-22T00:10:00Z", "artifact": "ewma_mae, trend_mae, lastval_mae, recent_mae"},
+    {"event": "step_ok", "step_id": "4A", "timestamp": "2026-03-22T00:11:00Z", "artifact": "shrinkage_mae_all"},
+    {"event": "step_ok", "step_id": "5A", "timestamp": "2026-03-22T00:12:00Z", "artifact": "rate_mae"}
+  ]
+}
