@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.env
+.venv/
+source/
+*.ipynb_checkpoints/
+artifacts/
+.pytest_cache/
+.coverage
+htmlcov/
