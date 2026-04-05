@@ -8,19 +8,34 @@ POST /GetM9MonthlyCostForecast      Run M9 v2 monthly cost forecast
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from config import SUPPORTED_MCCS
+from config import DB_CONNECTION_STRING, SUPPORTED_MCCS, TRANSACTIONS_DB_PATH
 from models import M9ForecastRequest, M9ForecastResponse
-from service import _ARTIFACT_CACHE, _init_cache, get_monthly_cost_forecast, start_artifact_watcher
+from repository import MerchantRepository, SQLAlchemyMerchantRepository, SQLiteMerchantRepository
+from service import _ARTIFACT_CACHE, _init_cache, get_monthly_cost_forecast, set_repository, start_artifact_watcher
+
+
+def _build_repository() -> MerchantRepository:
+    if DB_CONNECTION_STRING:
+        return SQLAlchemyMerchantRepository(connection_string=DB_CONNECTION_STRING)
+    if TRANSACTIONS_DB_PATH:
+        return SQLiteMerchantRepository(db_path=Path(TRANSACTIONS_DB_PATH))
+    raise RuntimeError(
+        "No database configured. Set DB_CONNECTION_STRING (SQLAlchemy URL) "
+        "or TRANSACTIONS_AND_COST_TYPE_DB_PATH for a local SQLite file."
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load artifacts synchronously at startup; fail hard if none exist."""
+    repo = _build_repository()
+    set_repository(repo)
     _init_cache()
     if not _ARTIFACT_CACHE:
         raise RuntimeError(
