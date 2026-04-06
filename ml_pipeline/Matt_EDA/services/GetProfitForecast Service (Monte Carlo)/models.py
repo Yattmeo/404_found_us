@@ -19,6 +19,8 @@ from config import DEFAULT_CONFIDENCE_INTERVAL, DEFAULT_N_SIMULATIONS, HORIZON_L
 class TPVForecastMonth(BaseModel, extra="ignore"):
     month_index: int
     tpv_mid: float
+    tpv_ci_lower: Optional[float] = None
+    tpv_ci_upper: Optional[float] = None
 
 
 class TPVConformalMetadata(BaseModel, extra="ignore"):
@@ -43,6 +45,8 @@ class TPVServiceOutput(BaseModel, extra="ignore"):
 class CostForecastMonth(BaseModel, extra="ignore"):
     month_index: int
     proc_cost_pct_mid: float
+    proc_cost_pct_ci_lower: Optional[float] = None
+    proc_cost_pct_ci_upper: Optional[float] = None
 
 
 class CostConformalMetadata(BaseModel, extra="ignore"):
@@ -121,6 +125,13 @@ class ProfitForecastRequest(BaseModel):
         le=1_000_000,
         description="Number of Monte Carlo samples for the profit distribution.",
     )
+    target_margin: Optional[float] = Field(
+        default=None,
+        description=(
+            "Optional target profit margin (fee_rate − cost_pct). "
+            "When set, each month reports p_target_margin_met."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +183,16 @@ class ProfitMonth(BaseModel):
     profit_std: float = Field(
         ..., description="Standard deviation of profit distribution (dollars).",
     )
+    simulation_mean: float = Field(
+        ..., description="Mean profit from Monte Carlo simulation (dollars).",
+    )
+    p_target_margin_met: Optional[float] = Field(
+        default=None,
+        description=(
+            "P(fee_rate − cost_sample ≥ target_margin) from Monte Carlo. "
+            "Only present when target_margin is specified in the request."
+        ),
+    )
 
 
 class ProfitSummary(BaseModel):
@@ -199,6 +220,21 @@ class ProfitSummary(BaseModel):
             "Setting fee_rate ≥ this value gives ~95% confidence of profitability."
         ),
     )
+    suggested_fee_for_target: Optional[float] = Field(
+        default=None,
+        description=(
+            "worst-month cost CI upper bound + target_margin. "
+            "Only present when target_margin is specified."
+        ),
+    )
+    avg_p_target_margin_met: Optional[float] = Field(
+        default=None,
+        description="Average p_target_margin_met across months.",
+    )
+    min_p_target_margin_met: Optional[float] = Field(
+        default=None,
+        description="Worst-case p_target_margin_met across months.",
+    )
 
 
 class SimulationMetadata(BaseModel):
@@ -215,6 +251,10 @@ class SimulationMetadata(BaseModel):
     tpv_context_len_used: int
     cost_context_len_used: int
     generated_at_utc: datetime
+    target_margin: Optional[float] = Field(
+        default=None,
+        description="Target margin requested (None if not specified).",
+    )
     correlation_assumed: str = Field(
         default="independent",
         description="'independent' — ρ ≈ 0.14, below 0.15 threshold.",

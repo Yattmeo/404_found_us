@@ -199,6 +199,35 @@ class TestSimulateProfitMonth:
         pm2 = self._run(rng2, n_simulations=100_000)
         assert abs(pm1.p_profitable - pm2.p_profitable) < 0.02
 
+    def test_simulation_mean_present(self, rng):
+        """simulation_mean should always be present."""
+        pm = self._run(rng)
+        assert isinstance(pm.simulation_mean, float)
+
+    def test_simulation_mean_close_to_profit_mid(self, rng):
+        """With many sims, simulation_mean ≈ profit_mid."""
+        pm = self._run(rng, n_simulations=100_000)
+        assert pm.simulation_mean == pytest.approx(pm.profit_mid, rel=0.05)
+
+    def test_p_target_margin_met_none_by_default(self, rng):
+        """Without target_margin, p_target_margin_met is None."""
+        pm = self._run(rng)
+        assert pm.p_target_margin_met is None
+
+    def test_p_target_margin_met_with_easy_target(self, rng):
+        """fee=0.10, cost~0.02, target=0.01 → high probability."""
+        pm = self._run(rng, fee_rate=0.10, cost_pct_mid=0.02,
+                       cost_pct_hw=0.005, target_margin=0.01)
+        assert pm.p_target_margin_met is not None
+        assert pm.p_target_margin_met > 0.90
+
+    def test_p_target_margin_met_with_hard_target(self, rng):
+        """fee=0.029, cost~0.02, target=0.05 → very low probability."""
+        pm = self._run(rng, fee_rate=0.029, cost_pct_mid=0.02,
+                       cost_pct_hw=0.005, target_margin=0.05)
+        assert pm.p_target_margin_met is not None
+        assert pm.p_target_margin_met < 0.10
+
 
 # ============================================================================
 # get_profit_forecast tests (no mocks needed — just pass upstream outputs)
@@ -339,6 +368,87 @@ class TestGetProfitForecast:
         )
         with pytest.raises(ValueError, match="must match"):
             get_profit_forecast(req)
+
+    def test_simulation_mean_in_response(self):
+        """Every month must have simulation_mean."""
+        req = _make_request()
+        resp = get_profit_forecast(req)
+        for m in resp.months:
+            assert isinstance(m.simulation_mean, float)
+
+    def test_target_margin_none_gives_null_fields(self):
+        """No target_margin → all target fields are None."""
+        req = _make_request()
+        resp = get_profit_forecast(req)
+        for m in resp.months:
+            assert m.p_target_margin_met is None
+        assert resp.summary.suggested_fee_for_target is None
+        assert resp.summary.avg_p_target_margin_met is None
+        assert resp.summary.min_p_target_margin_met is None
+        assert resp.metadata.target_margin is None
+
+    def test_target_margin_populates_all_fields(self):
+        """With target_margin, all target fields are populated."""
+        req = _make_request(target_margin=0.005)
+        resp = get_profit_forecast(req)
+        for m in resp.months:
+            assert m.p_target_margin_met is not None
+            assert 0.0 <= m.p_target_margin_met <= 1.0
+        assert resp.summary.suggested_fee_for_target is not None
+        assert resp.summary.avg_p_target_margin_met is not None
+        assert resp.summary.min_p_target_margin_met is not None
+        assert resp.metadata.target_margin == 0.005
+
+    def test_suggested_fee_for_target_value(self):
+        """suggested_fee = break_even + target_margin."""
+        req = _make_request(target_margin=0.01)
+        resp = get_profit_forecast(req)
+        assert resp.summary.suggested_fee_for_target == pytest.approx(
+            resp.summary.break_even_fee_rate + 0.01
+        )
+
+    def test_per_month_ci_bounds_used(self):
+        """Per-month CI bounds should override global half_width."""
+        # Construct TPV with very different per-month bounds vs global
+        tpv = _tpv_output(horizon=1)
+        tpv["forecast"][0]["tpv_ci_lower"] = 9000.0
+        tpv["forecast"][0]["tpv_ci_upper"] = 11000.0  # hw=1000
+        tpv["conformal_metadata"]["half_width_dollars"] = 200.0  # much narrower
+
+        cost = _cost_output(horizon=1)
+        cost["forecast"][0]["proc_cost_pct_ci_lower"] = 0.010
+        cost["forecast"][0]["proc_cost_pct_ci_upper"] = 0.030  # hw=0.01
+        cost["conformal_metadata"]["half_width"] = 0.002  # much narrower
+
+        req_with = _make_request(
+            tpv_service_output=tpv, cost_service_output=cost,
+            n_simulations=50_000,
+        )
+        resp_with = get_profit_forecast(req_with)
+
+        # Construct same but without per-month bounds (fall back to narrow global)
+        tpv2 = _tpv_output(horizon=1)
+        tpv2["forecast"][0].pop("tpv_ci_lower", None)
+        tpv2["forecast"][0].pop("tpv_ci_upper", None)
+        tpv2["conformal_metadata"]["half_width_dollars"] = 200.0
+
+        cost2 = _cost_output(horizon=1)
+        cost2["forecast"][0].pop("proc_cost_pct_ci_lower", None)
+        cost2["forecast"][0].pop("proc_cost_pct_ci_upper", None)
+        cost2["conformal_metadata"]["half_width"] = 0.002
+
+        req_without = _make_request(
+            tpv_service_output=tpv2, cost_service_output=cost2,
+            n_simulations=50_000,
+        )
+        resp_without = get_profit_forecast(req_without)
+
+        # Per-month bounds (hw=1000) produce wider CI than global (hw=200)
+        span_with = (resp_with.months[0].profit_ci_upper
+                     - resp_with.months[0].profit_ci_lower)
+        span_without = (resp_without.months[0].profit_ci_upper
+                        - resp_without.months[0].profit_ci_lower)
+        assert span_with > span_without
 
 
 # ============================================================================

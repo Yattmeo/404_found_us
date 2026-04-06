@@ -38,6 +38,7 @@ def _simulate_profit_month(
     confidence_interval: float,
     n_simulations: int,
     rng: np.random.Generator,
+    target_margin: float | None = None,
 ) -> ProfitMonth:
     """
     Run independent Monte Carlo for one forecast month.
@@ -85,6 +86,12 @@ def _simulate_profit_month(
         profit_ci_upper=float(np.percentile(profit_samples, hi_pct)),
         profit_median=float(np.median(profit_samples)),
         profit_std=float(np.std(profit_samples)),
+        simulation_mean=float(np.mean(profit_samples)),
+        p_target_margin_met=(
+            float((fee_rate - cost_samples >= target_margin).mean())
+            if target_margin is not None
+            else None
+        ),
     )
 
 
@@ -118,15 +125,30 @@ def get_profit_forecast(req: ProfitForecastRequest) -> ProfitForecastResponse:
     months: List[ProfitMonth] = []
 
     for h in range(horizon):
+        # Per-month CI bounds override global half-width when available
+        tpv_fm = tpv_out.forecast[h]
+        cost_fm = cost_out.forecast[h]
+
+        if tpv_fm.tpv_ci_lower is not None and tpv_fm.tpv_ci_upper is not None:
+            tpv_hw = (tpv_fm.tpv_ci_upper - tpv_fm.tpv_ci_lower) / 2
+        else:
+            tpv_hw = tpv_out.conformal_metadata.half_width_dollars
+
+        if cost_fm.proc_cost_pct_ci_lower is not None and cost_fm.proc_cost_pct_ci_upper is not None:
+            cost_hw = (cost_fm.proc_cost_pct_ci_upper - cost_fm.proc_cost_pct_ci_lower) / 2
+        else:
+            cost_hw = cost_out.conformal_metadata.half_width
+
         pm = _simulate_profit_month(
             tpv_mid=tpv_mids[h],
-            tpv_hw=tpv_out.conformal_metadata.half_width_dollars,
+            tpv_hw=tpv_hw,
             cost_pct_mid=cost_pct_mids[h],
-            cost_pct_hw=cost_out.conformal_metadata.half_width,
+            cost_pct_hw=cost_hw,
             fee_rate=req.fee_rate,
             confidence_interval=req.confidence_interval,
             n_simulations=req.n_simulations,
             rng=rng,
+            target_margin=req.target_margin,
         )
         pm.month_index = h + 1
         months.append(pm)
@@ -150,6 +172,21 @@ def get_profit_forecast(req: ProfitForecastRequest) -> ProfitForecastResponse:
         avg_p_profitable=float(np.mean(p_values)),
         min_p_profitable=float(np.min(p_values)),
         break_even_fee_rate=worst_cost_upper,
+        suggested_fee_for_target=(
+            worst_cost_upper + req.target_margin
+            if req.target_margin is not None
+            else None
+        ),
+        avg_p_target_margin_met=(
+            float(np.mean([m.p_target_margin_met for m in months]))
+            if req.target_margin is not None
+            else None
+        ),
+        min_p_target_margin_met=(
+            float(np.min([m.p_target_margin_met for m in months]))
+            if req.target_margin is not None
+            else None
+        ),
     )
 
     # Metadata
@@ -165,6 +202,7 @@ def get_profit_forecast(req: ProfitForecastRequest) -> ProfitForecastResponse:
         tpv_context_len_used=tpv_out.process_metadata.context_len_used,
         cost_context_len_used=cost_out.process_metadata.context_len_used,
         generated_at_utc=generated_at,
+        target_margin=req.target_margin,
         correlation_assumed="independent",
     )
 
