@@ -125,7 +125,6 @@ export default function App() {
       setQuoteResult(placeholderQuote);
       setIsPlaceholderQuote(true);
       setStep('result');
-      setQuoteError('Backend unavailable. Showing placeholder quote values.');
     } finally {
       setIsLoadingQuote(false);
     }

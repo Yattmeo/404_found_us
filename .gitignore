@@ -45,6 +45,7 @@ wandb/
 catboost_info/
 *.csv
 *.xlsx
+data/
 
 # Node
 node_modules/
@@ -73,3 +74,6 @@ Thumbs.db
 
 # Presentation assets (local only)
 presentation/
+
+# test data 
+/data

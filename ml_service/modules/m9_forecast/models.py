@@ -1,16 +1,14 @@
 """
-Pydantic request/response models for the M9 v2 cost forecast module.
+Pydantic models mirroring the M9 v2 service's request/response contracts.
 
-Replaces the previous SARIMA-based models (preserved in models_sarima_legacy.py).
-These mirror the contracts of the standalone GetAvgProcCostForecast Service v2.
+These are kept here so that ml_service can validate payloads before proxying
+to the standalone m9-forecast-service container.
 """
 from __future__ import annotations
 
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
-
-from .config import DEFAULT_CONFIDENCE_INTERVAL, DEFAULT_HORIZON_MONTHS
 
 
 # ── Request ────────────────────────────────────────────────────────────────
@@ -27,21 +25,15 @@ class ContextMonth(BaseModel):
     cost_type_pcts: Optional[Dict[str, float]] = None
 
 
-class CostForecastRequest(BaseModel):
-    """
-    M9 v2 monthly processing-cost forecast request.
-
-    Replaces the old SARIMA CostForecastRequest. The endpoint name
-    /ml/GetCostForecast is preserved for backward compatibility.
-    """
-    context_months: List[ContextMonth] = Field(..., min_length=1, max_length=6)
+class M9ForecastRequest(BaseModel):
+    context_months: List[ContextMonth]
     pool_mean_at_context_end: float
     knn_pool_mean_at_context_end: float
     peer_merchant_ids: Optional[List[int]] = None
     merchant_id: Optional[str] = None
     mcc: int
-    horizon_months: int = Field(default=DEFAULT_HORIZON_MONTHS, ge=1, le=12)
-    confidence_interval: float = Field(default=DEFAULT_CONFIDENCE_INTERVAL, gt=0.0, lt=1.0)
+    horizon_months: int = 3
+    confidence_interval: float = 0.90
 
 
 # ── Response ───────────────────────────────────────────────────────────────
@@ -76,7 +68,7 @@ class ProcessMetadata(BaseModel):
     strat_enabled: bool
 
 
-class CostForecastResponse(BaseModel):
+class M9ForecastResponse(BaseModel):
     forecast: List[ForecastMonth]
     conformal_metadata: ConformalMetadata
     process_metadata: ProcessMetadata

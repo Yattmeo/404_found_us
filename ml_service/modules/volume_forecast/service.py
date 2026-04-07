@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from itertools import product
@@ -8,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+logger = logging.getLogger(__name__)
 
 from .config import (
     CALIBRATION_MAX_ABS_INTERCEPT,
@@ -469,6 +472,23 @@ def get_volume_forecast(req: VolumeForecastRequest) -> VolumeForecastResponse:
                     ss_res = float(np.sum(np.square(best_residuals)))
                     ss_tot = float(np.sum(np.square(actual_arr - actual_arr.mean())))
                     calibration_r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else None
+
+    # ── Onboarding-scale adjustment ──────────────────────────────────────────
+    # When calibration cannot run (e.g. synthetic onboarding dates don't
+    # overlap historical composite dates) the raw SARIMA forecast can be
+    # far from the merchant's expected volume.  Re-centre the forecast at
+    # the onboarding mean while preserving the SARIMA seasonal shape.
+    if not calibration_successful and onboarding_mean is not None and onboarding_mean > 0:
+        forecast_avg = float(np.mean(np.abs(forecast_mean))) if len(forecast_mean) > 0 else 0.0
+        if forecast_avg > 1e-6:
+            scale = onboarding_mean / forecast_avg
+            forecast_mean = forecast_mean * scale
+            forecast_lower = forecast_lower * scale
+            forecast_upper = forecast_upper * scale
+        else:
+            forecast_mean = np.full_like(forecast_mean, onboarding_mean)
+            forecast_lower = np.full_like(forecast_lower, onboarding_mean * 0.85)
+            forecast_upper = np.full_like(forecast_upper, onboarding_mean * 1.15)
 
     forecast_mean = np.maximum(forecast_mean, 0.0)
     forecast_lower = np.maximum(forecast_lower, 0.0)

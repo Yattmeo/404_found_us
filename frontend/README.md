@@ -1,113 +1,58 @@
-# Merchant Fee Calculator - Frontend
+# Sales Frontend
 
-A dynamic React application for merchant fee calculation and profitability analysis.
+React application for merchant fee calculation and profitability analysis. Served at `/sales/` via nginx.
 
-## Features
+> Part of the **404 Found Us** platform. See the [root README](../README.md) for the full architecture.
 
-- **Merchant Profitability Calculator**: Assess profitability based on current merchant rates and transaction data
-- **Rates Quotation Tool**: Analyze merchant profiles and recommend suitable pricing
-- **Data Upload**: Support for CSV file uploads with validation
-- **Manual Entry**: Enter transaction data manually
-- **API Integration**: Full backend integration for dynamic calculations
-- **Responsive Design**: Beautiful UI with Tailwind CSS
+---
 
-## Prerequisites
+## Tools
 
-- Node.js (v14 or higher)
-- npm or yarn
+### Merchant Profitability Calculator
+Upload transaction CSV or enter manually → calculates interchange & network fees → shows profitability metrics, cost forecast chart, volume trend, and probability curve.
 
-## Installation
+### Rates Quotation Tool
+Upload merchant transaction history → set desired profit margin → get recommended rate with ML-driven cost forecast (12-week), volume forecast (12-week), and profitability probability curve.
 
-1. Install dependencies:
+---
+
+## Tech Stack
+
+- **React** 18 (Create React App)
+- **Tailwind CSS** — styling
+- **React Hook Form** — form management
+- **Axios** — HTTP client
+- **Lucide React** — icons
+- **XLSX** — Excel file parsing
+
+---
+
+## Components
+
+```
+src/components/
+├── LandingPage.jsx                      Navigation / tool selection
+├── EnhancedMerchantFeeCalculator.jsx    Current Rates tool (input + results)
+├── DesiredMarginCalculator.jsx          Desired Margin tool (input)
+├── DesiredMarginResults.jsx             Desired Margin results + charts
+├── ResultsPanel.jsx                     Profitability Calculator results + charts
+├── DataUploadValidator.jsx              CSV/Excel upload with validation
+├── ManualTransactionEntry.jsx           Manual transaction entry form
+├── MCCDropdown.jsx                      MCC code selector
+└── ui/                                  Shared UI primitives
+```
+
+---
+
+## Development
+
 ```bash
+# Standalone (outside Docker)
 npm install
+npm start          # http://localhost:3000
+
+# Via Docker (normal workflow)
+docker compose up frontend
 ```
 
-2. Create a `.env` file based on `.env.example`:
-```bash
-cp .env.example .env
-```
-
-3. Update the API URL in `.env` if needed
-
-## Running the Application
-
-### Development Mode
-```bash
-npm start
-```
-
-The application will open at [http://localhost:3000](http://localhost:3000)
-
-### Production Build
-```bash
-npm run build
-```
-
-## Project Structure
-
-```
-frontend/
-├── public/
-├── src/
-│   ├── components/
-│   │   ├── ui/              # Reusable UI components
-│   │   ├── LandingPage.jsx
-│   │   ├── EnhancedMerchantFeeCalculator.jsx
-│   │   ├── DesiredMarginCalculator.jsx
-│   │   ├── ResultsPanel.jsx
-│   │   ├── DesiredMarginResults.jsx
-│   │   ├── DataUploadValidator.jsx
-│   │   ├── ManualTransactionEntry.jsx
-│   │   └── MCCDropdown.jsx
-│   ├── services/
-│   │   └── api.js           # API service layer
-│   ├── lib/
-│   │   └── utils.js         # Utility functions
-│   ├── App.js
-│   ├── App.css
-│   └── index.js
-├── tailwind.config.js
-├── postcss.config.js
-└── package.json
-```
-
-## API Integration
-
-The application connects to the backend API for:
-- Transaction data upload and validation
-- Current rate profitability calculations
-- Desired margin quotation calculations
-- MCC code lookups
-
-All API calls are handled through the `services/api.js` module.
-
-## Technologies Used
-
-- **React** 18.3.1
-- **React Hook Form** - Form management
-- **Tailwind CSS** - Styling
-- **Lucide React** - Icons
-- **Axios** - HTTP client
-- **XLSX** - Excel file parsing
-
-## Available Scripts
-
-- `npm start` - Run development server
-- `npm run build` - Create production build
-- `npm test` - Run tests
-- `npm run eject` - Eject from Create React App
-
-## Features Overview
-
-### Current Rates Calculator
-- Upload transaction CSV or enter manually
-- Configure fee structure (percentage, fixed, or both)
-- View profitability metrics and suggested rates
-- Compare with current rates if provided
-
-### Desired Margin Calculator
-- Upload merchant transaction history
-- Set desired profit margin
-- Get rate quotations and ranges
-- View expected metrics with error margins
+API URL configured via `REACT_APP_BACKEND_URL` (defaults to `http://localhost/api/v1`).

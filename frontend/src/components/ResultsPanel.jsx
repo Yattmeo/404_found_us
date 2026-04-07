@@ -34,38 +34,7 @@ const buildSmoothPath = (coords) => {
   return path;
 };
 
-const PROBABILITY_ASYMPTOTE_MAX = 97.5;
 
-const smoothMonotonicSeries = (points) => {
-  if (!Array.isArray(points) || points.length < 3) return points || [];
-
-  const smoothed = points.map((point, index) => {
-    const current = Number(point.y);
-    if (index === 0 || index === points.length - 1 || !Number.isFinite(current)) {
-      return { ...point, y: Number.isFinite(current) ? current : 0 };
-    }
-
-    const prev = Number(points[index - 1].y);
-    const next = Number(points[index + 1].y);
-    const weighted = (prev + (2 * current) + next) / 4;
-    return { ...point, y: Number.isFinite(weighted) ? weighted : current };
-  });
-
-  let runningMax = 0;
-  return smoothed.map((point) => {
-    const clamped = Math.max(0, Math.min(PROBABILITY_ASYMPTOTE_MAX, Number(point.y)));
-    runningMax = Math.max(runningMax, clamped);
-    return { ...point, y: Number(runningMax.toFixed(2)) };
-  });
-};
-
-const asymptoticCurveValue = (rawPercent) => {
-  const clamped = Math.max(0, Math.min(PROBABILITY_ASYMPTOTE_MAX, Number(rawPercent) || 0));
-  const p = clamped / 100;
-  // Concave transform: rises fast early, then flattens near the top asymptote.
-  const eased = 1 - Math.pow(1 - p, 1.6);
-  return Number((eased * PROBABILITY_ASYMPTOTE_MAX).toFixed(2));
-};
 
 const buildFallbackCostSeries = (baseRatePct) => {
   const now = new Date();
@@ -130,7 +99,7 @@ const SarimaMiniChart = ({ series }) => {
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 md:p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">SARIMA Forecast - Cost (%)</h3>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">Cost Forecast (%)</h3>
       <div className="w-full overflow-x-auto">
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full min-w-[760px]">
           {[0, 1, 2, 3, 4].map((t) => {
@@ -358,12 +327,6 @@ const ProbabilityMiniChart = ({
 
 const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
-  const hasQuotedMargin = results?.margin !== null && results?.margin !== undefined;
-  const hasQuotedProfit = results?.estimatedProfit !== null && results?.estimatedProfit !== undefined;
-  const hasRangeValues = results?.quotableRange?.min !== null &&
-    results?.quotableRange?.min !== undefined &&
-    results?.quotableRange?.max !== null &&
-    results?.quotableRange?.max !== undefined;
 
   if (!results) {
     return (
@@ -397,143 +360,21 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
 
   const orderedProfitRange = getOrderedProfitRange();
 
-  const suggestedRatePct = Number(results?.suggestedRate);
-  const marginBps = Number(results?.margin);
-  const costRatePct =
-    Number.isFinite(suggestedRatePct) && Number.isFinite(marginBps)
-      ? Number((suggestedRatePct - (marginBps / 100)).toFixed(2))
-      : null;
-
-  const noCurrentRateCurveModel = (() => {
-    if (!(Array.isArray(results?.profitabilityCurve) && results.profitabilityCurve.length > 0)) {
-      const fallbackPoints = [
-        { x: 1.5, y: 15, label: '1.5' },
-        { x: 1.75, y: 35, label: '1.75' },
-        { x: 2.0, y: 55, label: '2' },
-        { x: 2.25, y: 75, label: '2.25' },
-        { x: 2.35, y: 90, label: '2.35' },
-        { x: 2.5, y: 93, label: '2.5' },
-        { x: 2.75, y: 95, label: '2.75' },
-        { x: 3.0, y: 97, label: '3' },
-        { x: 3.25, y: 98, label: '3.25' },
-        { x: 3.5, y: 99, label: '3.5' },
-      ];
-
-      return {
-        seriesType: 'probability',
-        points: smoothMonotonicSeries(fallbackPoints.map((p) => ({
-          ...p,
-          y: asymptoticCurveValue(p.y),
-        }))),
-      };
+  // Map backend profitability curve directly to chart points.
+  // The backend already returns a correctly shaped S-curve with proper
+  // probability values — no additional smoothing / capping / zeroing needed.
+  const directCurvePoints = (() => {
+    if (!Array.isArray(results?.profitabilityCurve) || results.profitabilityCurve.length === 0) {
+      return [];
     }
-
-    const sorted = results.profitabilityCurve
+    return results.profitabilityCurve
       .map((point) => ({
         x: Number(point?.rate_pct),
-        y: Number(point?.probability_pct),
-        profitabilityPct: Number(point?.profitability_pct),
+        y: Math.max(0, Math.min(99.5, Number(point?.probability_pct || 0))),
+        label: String(point?.rate_pct),
       }))
-      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
       .sort((a, b) => a.x - b.x);
-
-    if (sorted.length === 0) {
-      return { seriesType: 'probability', points: [] };
-    }
-
-    const probabilityValues = sorted.map((point) => Math.max(0, Math.min(100, point.y)));
-    const probabilityMin = Math.min(...probabilityValues);
-    const probabilityMax = Math.max(...probabilityValues);
-    const probabilityRange = probabilityMax - probabilityMin;
-
-    const profitabilityValues = sorted
-      .map((point) => point.profitabilityPct)
-      .filter((value) => Number.isFinite(value));
-    const hasProfitabilitySignal = profitabilityValues.length === sorted.length;
-    const profitabilityMin = hasProfitabilitySignal ? Math.min(...profitabilityValues) : null;
-    const profitabilityMax = hasProfitabilitySignal ? Math.max(...profitabilityValues) : null;
-    const profitabilityRange =
-      hasProfitabilitySignal && profitabilityMin !== null && profitabilityMax !== null
-        ? (profitabilityMax - profitabilityMin)
-        : 0;
-
-    // If backend probability is saturated/flat, chart normalized profitability trend instead.
-    if (probabilityRange < 0.5 && hasProfitabilitySignal && profitabilityRange > 1e-6) {
-      let runningMax = 0;
-      const points = sorted.map((point) => {
-        const normalized = ((point.profitabilityPct - profitabilityMin) / profitabilityRange) * 100;
-        const clampedY = asymptoticCurveValue(normalized);
-        runningMax = Math.max(runningMax, clampedY);
-        return {
-          x: point.x,
-          y: Number(runningMax.toFixed(2)),
-          label: point.x.toString(),
-        };
-      });
-      return {
-        seriesType: 'normalized-profitability',
-        points: smoothMonotonicSeries(points),
-      };
-    }
-
-    let runningMax = 0;
-    const points = sorted.map((point) => {
-      const clampedY = asymptoticCurveValue(point.y);
-      runningMax = Math.max(runningMax, clampedY);
-      return {
-        x: point.x,
-        y: runningMax,
-        label: point.x.toString(),
-      };
-    });
-    return {
-      seriesType: 'probability',
-      points: smoothMonotonicSeries(points),
-    };
-  })();
-
-  const noCurrentRateCurvePoints = (() => {
-    let points = Array.isArray(noCurrentRateCurveModel.points) ? [...noCurrentRateCurveModel.points] : [];
-
-    // Rule 1: x-intercept should occur where quoted rate equals estimated cost rate.
-    if (Number.isFinite(costRatePct)) {
-      points.push({ x: costRatePct, y: 0, label: Number(costRatePct).toString() });
-    }
-
-    // Rule 2: extend chart horizon by +1.00% above suggested rate for better quote context.
-    if (Number.isFinite(suggestedRatePct)) {
-      const extendedX = Number((suggestedRatePct + 1.0).toFixed(1));
-      points.push({
-        x: extendedX,
-        y: PROBABILITY_ASYMPTOTE_MAX,
-        label: extendedX.toString(),
-      });
-    }
-
-    // Deduplicate by x, keeping the lower y at the same rate to preserve intercept behavior.
-    const byX = new Map();
-    points.forEach((point) => {
-      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
-      const key = Number(point.x).toFixed(2);
-      if (!byX.has(key)) {
-        byX.set(key, { x: Number(key), y: Number(point.y), label: Number(key).toString() });
-      } else {
-        const existing = byX.get(key);
-        existing.y = Math.min(existing.y, Number(point.y));
-      }
-    });
-
-    const sorted = Array.from(byX.values()).sort((a, b) => a.x - b.x);
-
-    // Force all rates at/below cost-rate to 0, then apply asymptotic+monotonic smoothing.
-    const anchored = sorted.map((point) => {
-      if (Number.isFinite(costRatePct) && point.x <= costRatePct) {
-        return { ...point, y: 0 };
-      }
-      return { ...point, y: asymptoticCurveValue(point.y) };
-    });
-
-    return smoothMonotonicSeries(anchored);
   })();
 
   return (
@@ -633,6 +474,26 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                   }
                 />
 
+                {/* Profitability curve from ML forecasting */}
+                {Array.isArray(results.profitabilityCurve) && results.profitabilityCurve.length > 0 && (
+                  <ProbabilityMiniChart
+                    title="Probability of Profitability"
+                    yLabel="Probability (%)"
+                    xLabel="Rate (%)"
+                    valueFormatter={(v) => `${Number(v).toFixed(2)}%`}
+                    fixedPercentScale
+                    yMinOverride={0}
+                    yMaxOverride={100}
+                    markerX={Number.isFinite(Number(results.suggestedRate)) ? Number(results.suggestedRate) : null}
+                    markerLabel={
+                      Number.isFinite(Number(results.suggestedRate))
+                        ? `Suggested ${Number(results.suggestedRate).toFixed(2)}%`
+                        : null
+                    }
+                    points={directCurvePoints}
+                  />
+                )}
+
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Details</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -730,7 +591,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                     ? `Suggested ${Number(results.suggestedRate).toFixed(2)}%`
                     : null
                 }
-                points={noCurrentRateCurvePoints}
+                points={directCurvePoints}
               />
             </div>
           </div>

@@ -259,7 +259,13 @@ class ProductionQuoteService:
         merchant_ids: List[int],
         cost_type_ids: List[str],
     ) -> pd.DataFrame:
-        tx = reference_txn[reference_txn["merchant_id"].isin(merchant_ids)].copy()
+        # Ensure merchant_ids match the dtype of the reference column (may be str).
+        ref_dtype = reference_txn["merchant_id"].dtype
+        if ref_dtype == object:
+            coerced_ids = [str(mid) for mid in merchant_ids]
+        else:
+            coerced_ids = merchant_ids
+        tx = reference_txn[reference_txn["merchant_id"].isin(coerced_ids)].copy()
         if tx.empty:
             return pd.DataFrame()
 

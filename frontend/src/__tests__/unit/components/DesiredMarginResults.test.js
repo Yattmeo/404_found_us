@@ -40,7 +40,7 @@ describe('DesiredMarginResults', () => {
     expect(screen.getByText('$12,500.00 - $32,500.00')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /more details/i }));
-    expect(screen.getByText(/sarima forecast - cost/i)).toBeInTheDocument();
+    expect(screen.getByText(/cost forecast/i)).toBeInTheDocument();
     expect(screen.getByText(/transaction summary/i)).toBeInTheDocument();
     expect(screen.getByText(/volume trend/i)).toBeInTheDocument();
     expect(screen.getByText(/probability of profitability/i)).toBeInTheDocument();

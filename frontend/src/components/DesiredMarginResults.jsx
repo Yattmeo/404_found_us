@@ -165,7 +165,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
     if (!state) {
       return (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">SARIMA Forecast - Cost (%)</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Cost Forecast (%)</h3>
           <p className="text-sm text-gray-500">No chart data available yet.</p>
         </div>
       );
@@ -190,9 +190,9 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 md:p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">SARIMA Forecast - Cost (%)</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Cost Forecast (%)</h3>
         <div className="w-full overflow-x-auto">
-          <svg viewBox={`0 0 ${width} ${height}`} className="w-full min-w-[760px]" role="img" aria-label="SARIMA cost chart">
+          <svg viewBox={`0 0 ${width} ${height}`} className="w-full min-w-[760px]" role="img" aria-label="Cost forecast chart">
             {[0, 1, 2, 3, 4].map((tick) => {
               const y = top + (usableH * tick) / 4;
               return <line key={`grid-${tick}`} x1={left} y1={y} x2={width - right} y2={y} stroke="#E5E7EB" strokeWidth="1" />;

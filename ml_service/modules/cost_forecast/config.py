@@ -1,36 +1,29 @@
-SARIMA_D_FIXED: int = 1
-SARIMA_D_SEASONAL_FIXED: int = 1
-SARIMA_SEASONAL_PERIOD: int = 13
+"""
+Configuration for the M9 v2 cost forecast module.
 
-SARIMA_P_CANDIDATES: list[int] = [0, 1]
-SARIMA_Q_CANDIDATES: list[int] = [0, 1]
-SARIMA_P_SEASONAL_CANDIDATES: list[int] = [0, 1]
-SARIMA_Q_SEASONAL_CANDIDATES: list[int] = [0, 1]
-SARIMA_OPTIMISATION_TIMEOUT_S: float = 20.0
+The M9 service runs as a standalone container; this config holds
+the URL and supported parameters for the proxy layer.
+"""
+from __future__ import annotations
 
-SARIMA_DEFAULT_P: int = 1
-SARIMA_DEFAULT_Q: int = 1
-SARIMA_DEFAULT_P_SEASONAL: int = 1
-SARIMA_DEFAULT_Q_SEASONAL: int = 1
+import os
 
-EXOGENOUS_FEATURE_COLUMNS: list[str] = [
-    "weekly_txn_count_mean",
-    "weekly_total_proc_value_mean",
-    "weekly_avg_txn_value_mean",
-    "weekly_txn_count_stdev",
-    "weekly_total_proc_value_stdev",
-    "weekly_avg_txn_value_stdev",
-    "weekly_avg_txn_cost_pct_stdev",
-    "neighbor_coverage",
-]
+# URL of the standalone M9 forecast container (set via docker-compose env)
+M9_FORECAST_SERVICE_URL: str = os.getenv(
+    "M9_FORECAST_SERVICE_URL", "http://m9-forecast-service:8092"
+)
 
-CALIBRATION_MIN_MATCHED_POINTS: int = 2
-CALIBRATION_MIN_PRED_STD: float = 1e-4
-CALIBRATION_MAX_ABS_SLOPE: float = 10.0
-CALIBRATION_MAX_ABS_INTERCEPT: float = 0.05
-CALIBRATION_MAX_ABS_INTERCEPT_RELATIVE_TO_CONTEXT_MEAN: float = 2.0
+# Proxy timeout (seconds)
+M9_PROXY_TIMEOUT: float = 30.0
 
-FALLBACK_MIN_HISTORY_WEEKS: int = 4
+# Supported context lengths in the M9 v2 pipeline
+SUPPORTED_CONTEXT_LENS: list[int] = [1, 3, 6]
 
-DEFAULT_FORECAST_HORIZON_WKS: int = 12
-DEFAULT_CONFIDENCE_INTERVAL: float = 0.95
+# Default forecast horizon (months)
+DEFAULT_HORIZON_MONTHS: int = 3
+
+# Default confidence interval for conformal prediction intervals
+DEFAULT_CONFIDENCE_INTERVAL: float = 0.90
+
+# Supported MCCs
+SUPPORTED_MCCS: list[int] = [5411]

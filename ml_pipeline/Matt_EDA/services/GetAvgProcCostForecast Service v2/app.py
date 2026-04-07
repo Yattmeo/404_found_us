@@ -20,13 +20,16 @@ from service import _ARTIFACT_CACHE, _init_cache, get_monthly_cost_forecast, sta
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load artifacts synchronously at startup; fail hard if none exist."""
+    """Load artifacts at startup; warn but continue if none exist."""
     _init_cache()
     if not _ARTIFACT_CACHE:
-        raise RuntimeError(
-            "No artifact bundles loaded at startup. Run train.py first."
+        import logging
+        logging.getLogger("GetM9").warning(
+            "No artifact bundles found at startup. "
+            "Service will start in degraded mode — run train.py to enable forecasts."
         )
-    start_artifact_watcher()
+    else:
+        start_artifact_watcher()
     yield
 
 
@@ -60,9 +63,10 @@ def health() -> dict[str, Any]:
             }
         )
     return {
-        "status": "ok",
+        "status": "ok" if _ARTIFACT_CACHE else "degraded",
         "supported_mccs": SUPPORTED_MCCS,
         "loaded_bundles": loaded,
+        "note": None if _ARTIFACT_CACHE else "No artifacts loaded. Run train.py to enable forecasts.",
     }
 
 

@@ -267,26 +267,29 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       delete payload.fixedFee;
       delete payload.currentRate;
 
+      // Always use the desired-margin-details endpoint so that ML
+      // forecasting (M9 cost forecast + SARIMA volume forecast) is
+      // available for both the profitability calculator and quotation tool.
+      const quotePayload = {
+        mcc: data.mcc,
+        average_transaction_value: avgTicket,
+        monthly_transactions: txCount,
+        fixed_fee:
+          data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
+            ? 0.0
+            : payload.fixed_fee,
+        desired_margin: 0.015,
+        transactions: [],
+      };
+
       if (hasCurrentRate) {
-        // Mode 1: evaluate metrics for an explicitly provided current rate.
-        const apiResults = await merchantFeeAPI.calculateCurrentRates(payload);
-        setResults(normalizeCurrentRateResults(apiResults, data, txCount, avgTicket, totalAmount));
-      } else {
-        // Mode 2: no current rate provided, fetch rate-range profitability guidance.
-        const quotePayload = {
-          mcc: data.mcc,
-          average_transaction_value: avgTicket,
-          monthly_transactions: txCount,
-          fixed_fee:
-            data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
-              ? 0.0
-              : payload.fixed_fee,
-          desired_margin: 0.015,
-          transactions: [],
-        };
-        const apiResults = await desiredMarginAPI.getDesiredMarginDetails(quotePayload);
-        setResults(normalizeRangeResults(apiResults, data, txCount, avgTicket, totalAmount));
+        // Pass through the current rate so the backend uses it as the
+        // recommended rate instead of computing one from desired_margin.
+        quotePayload.current_rate = payload.current_rate;
       }
+
+      const apiResults = await desiredMarginAPI.getDesiredMarginDetails(quotePayload);
+      setResults(normalizeRangeResults(apiResults, data, txCount, avgTicket, totalAmount));
     } catch (error) {
       console.error('Calculation error:', error);
       const { txCount, totalAmount, avgTicket } = computeTransactionMetrics(transactionData);

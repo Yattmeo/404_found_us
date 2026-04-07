@@ -135,9 +135,14 @@ class MerchantQuoteService:
         mcc: int,
         card_types: list[str],
         onboarding_rows: list[dict],
+        base_cost_rate: float | None = None,
     ) -> dict | None:
         if not onboarding_rows:
             return None
+
+        composite_payload = None
+        cost_payload = None
+        volume_payload = None
 
         try:
             with httpx.Client(timeout=_ML_PIPELINE_TIMEOUT_S) as client:
@@ -156,29 +161,42 @@ class MerchantQuoteService:
                 if not weekly_features:
                     return None
 
-                cost_resp = client.post(
-                    f"{_ML_SERVICE_URL}/ml/GetCostForecast",
-                    json={
+                try:
+                    cost_body = {
                         "composite_weekly_features": weekly_features,
                         "onboarding_merchant_txn_df": onboarding_rows,
                         "mcc": mcc,
-                    },
-                )
-                cost_resp.raise_for_status()
-                cost_payload = cost_resp.json()
+                    }
+                    if base_cost_rate is not None:
+                        cost_body["base_cost_rate"] = base_cost_rate
+                    cost_resp = client.post(
+                        f"{_ML_SERVICE_URL}/ml/GetCostForecast",
+                        json=cost_body,
+                    )
+                    cost_resp.raise_for_status()
+                    cost_payload = cost_resp.json()
+                except Exception as exc:
+                    logger.warning("Cost forecast step failed (non-fatal): %s", exc)
 
-                volume_resp = client.post(
-                    f"{_ML_SERVICE_URL}/ml/GetVolumeForecast",
-                    json={
-                        "composite_weekly_features": weekly_features,
-                        "onboarding_merchant_txn_df": onboarding_rows,
-                        "mcc": mcc,
-                    },
-                )
-                volume_resp.raise_for_status()
-                volume_payload = volume_resp.json()
+                try:
+                    volume_resp = client.post(
+                        f"{_ML_SERVICE_URL}/ml/GetVolumeForecast",
+                        json={
+                            "composite_weekly_features": weekly_features,
+                            "onboarding_merchant_txn_df": onboarding_rows,
+                            "mcc": mcc,
+                        },
+                    )
+                    volume_resp.raise_for_status()
+                    volume_payload = volume_resp.json()
+                except Exception as exc:
+                    logger.warning("Volume forecast step failed (non-fatal): %s", exc)
+
         except Exception as exc:
             logger.warning("ML insights pipeline failed: %s", exc)
+            return None
+
+        if cost_payload is None and volume_payload is None:
             return None
 
         return {
@@ -265,8 +283,8 @@ class MerchantQuoteService:
             return None
 
         composite_payload = pipeline["composite"]
-        cost_payload = pipeline["cost"]
-        volume_payload = pipeline["volume"]
+        cost_payload = pipeline.get("cost") or {}
+        volume_payload = pipeline.get("volume") or {}
 
         cost_week1 = None
         if cost_payload.get("forecast"):

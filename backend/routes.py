@@ -547,6 +547,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         mcc=mcc_int,
         card_types=card_types,
         onboarding_rows=onboarding_rows,
+        base_cost_rate=float(base_cost_rate) if base_cost_rate is not None else None,
     )
 
     def _safe_float(value: object, default: float = 0.0) -> float:
@@ -588,9 +589,9 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     ml_context = None
 
     if pipeline is not None:
-        composite_payload = pipeline.get("composite", {})
-        cost_payload = pipeline.get("cost", {})
-        volume_payload = pipeline.get("volume", {})
+        composite_payload = pipeline.get("composite") or {}
+        cost_payload = pipeline.get("cost") or {}
+        volume_payload = pipeline.get("volume") or {}
         cost_forecast = cost_payload.get("forecast", [])
         volume_forecast = volume_payload.get("forecast", [])
 
@@ -636,12 +637,22 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 mid_total_profit += v["mid"] * (recommended_rate - c_mid)
                 mid_total_revenue += v["mid"] * recommended_rate
 
-            # Keep summary range consistent with curve economics by including
-            # fixed-fee contribution across the same forecast horizon.
+            # Derive fixed-fee contribution from forecast volumes so that
+            # the probability curve stays rate-sensitive.  Using the user's
+            # raw transaction_count would overwhelm the spread when SARIMA
+            # volumes are small, producing a flat 100 % curve.
             fixed_fee_per_txn = _safe_float(result.get("minimum_fee"), 0.0)
-            total_txn_count = _safe_float(result.get("transaction_count"), 0.0)
-            weekly_txn_count = total_txn_count / 4.345 if total_txn_count > 0 else 0.0
-            horizon_fixed_fee = fixed_fee_per_txn * weekly_txn_count * paired_len
+            forecast_avg_ticket = _safe_float(result.get("average_ticket"), 0.0)
+            total_forecast_mid_volume = sum(
+                max(0.0, _safe_float(volume_series[i]["mid"], 0.0))
+                for i in range(paired_len)
+            )
+            implied_horizon_txns = (
+                total_forecast_mid_volume / forecast_avg_ticket
+                if forecast_avg_ticket > 0
+                else 0.0
+            )
+            horizon_fixed_fee = fixed_fee_per_txn * implied_horizon_txns
             low_total += horizon_fixed_fee
             high_total += horizon_fixed_fee
             mid_total_profit += horizon_fixed_fee
@@ -675,10 +686,19 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 rate_grid.append(recommended_rate_pct)
             rate_grid = sorted(set(rate_grid))
 
+            # Pre-compute a rate-independent cost uncertainty spread so the
+            # probability curve increases monotonically with rate.  Using the
+            # raw (high-low)/2 spread causes it to grow with rate due to wide
+            # asymmetric SARIMA volume CI bands (lower=0, upper≫mid).
+            cost_uncertainty_spread = 0.0
+            for idx in range(paired_len):
+                c = cost_series[idx]
+                v = volume_series[idx]
+                c_half_width = (max(0.0, c["upper"]) - max(0.0, c["lower"])) / 2.0
+                cost_uncertainty_spread += max(0.0, v["mid"]) * c_half_width
+
             for rate_pct in rate_grid:
                 rate_decimal = rate_pct / 100.0
-                low_total_rate = 0.0
-                high_total_rate = 0.0
                 mid_total_rate = 0.0
                 total_mid_volume = 0.0
                 total_mid_revenue = 0.0
@@ -686,31 +706,19 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 for idx in range(paired_len):
                     c = cost_series[idx]
                     v = volume_series[idx]
-                    c_lower = max(0.0, c["lower"])
                     c_mid = max(0.0, c["mid"])
-                    c_upper = max(c_lower, c["upper"])
 
-                    low_total_rate += v["lower"] * (rate_decimal - c_upper)
-                    high_total_rate += v["upper"] * (rate_decimal - c_lower)
                     mid_total_rate += v["mid"] * (rate_decimal - c_mid)
                     total_mid_volume += max(0.0, v["mid"])
                     total_mid_revenue += max(0.0, v["mid"]) * rate_decimal
 
-                # Include fixed-fee contribution so curve matches front-card economics.
-                fixed_fee_per_txn = _safe_float(result.get("minimum_fee"), 0.0)
-                total_txn_count = _safe_float(result.get("transaction_count"), 0.0)
-                weekly_txn_count = total_txn_count / 4.345 if total_txn_count > 0 else 0.0
-                horizon_fixed_fee = fixed_fee_per_txn * weekly_txn_count * paired_len
-
-                low_total_rate += horizon_fixed_fee
-                high_total_rate += horizon_fixed_fee
-                mid_total_rate += horizon_fixed_fee
-                total_mid_revenue += horizon_fixed_fee
-
-                # Avoid probability saturation at exactly 0/100 by introducing a
-                # minimum uncertainty band tied to projected revenue.
+                # The probability curve measures rate-margin sensitivity:
+                # "How likely is THIS RATE to cover processing costs?"
+                # Fixed fees are deterministic and don't depend on the rate,
+                # so they are excluded from the curve (but kept in the summary
+                # profit range below).
                 spread_band = max(
-                    (high_total_rate - low_total_rate) / 2.0,
+                    cost_uncertainty_spread,
                     total_mid_revenue * 0.08,
                     1e-9,
                 )
@@ -734,8 +742,8 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             "matching_start_month": composite_payload.get("matching_start_month"),
             "matching_end_month": composite_payload.get("matching_end_month"),
             "matched_neighbor_merchant_ids": composite_payload.get("matched_neighbor_merchant_ids", []),
-            "sarima_cost": cost_payload.get("sarima_metadata"),
-            "sarima_volume": volume_payload.get("sarima_metadata"),
+            "cost_forecast_metadata": cost_payload.get("conformal_metadata"),
+            "volume_forecast_metadata": volume_payload.get("sarima_metadata"),
         }
 
     if not profitability_curve:

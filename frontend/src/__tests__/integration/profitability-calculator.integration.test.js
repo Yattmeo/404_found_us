@@ -465,7 +465,7 @@ describe('Profitability Calculator (EnhancedMerchantFeeCalculator) – integrati
 
       // Current chart section heading
       expect(
-        screen.getByText(/sarima forecast - cost/i),
+        screen.getByText(/cost forecast/i),
       ).toBeInTheDocument();
 
       // Additional details section

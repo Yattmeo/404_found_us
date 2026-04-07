@@ -363,12 +363,12 @@ describe('Rate Optimisation Tool (DesiredMarginCalculator) – integration', () 
     });
   });
 
-  // ── IC8: "More Details" – SARIMA, volume, profitability sections ──────────
+  // ── IC8: "More Details" – cost forecasts, volume, profitability sections ──────────
   // Uses jest.requireActual to render the real DesiredMarginResults component,
   // bypassing the simplified stub defined above.
 
-  describe('IC8 – "More Details": SARIMA cost forecasts, volume trends, profitability curve', () => {
-    it('clicking More Details reveals the SARIMA chart, volume trend, and profitability sections', () => {
+  describe('IC8 – "More Details": cost forecasts, volume trends, profitability curve', () => {
+    it('clicking More Details reveals the cost forecast chart, volume trend, and profitability sections', () => {
       const RealDesiredMarginResults =
         jest.requireActual('../../components/DesiredMarginResults').default;
 
@@ -398,8 +398,8 @@ describe('Rate Optimisation Tool (DesiredMarginCalculator) – integration', () 
 
       fireEvent.click(screen.getByRole('button', { name: /more details/i }));
 
-      // SARIMA cost forecast chart
-      expect(screen.getByRole('img', { name: /sarima cost chart/i })).toBeInTheDocument();
+      // Cost forecast chart
+      expect(screen.getByRole('img', { name: /cost forecast chart/i })).toBeInTheDocument();
 
       // Volume trend chart
       expect(screen.getByText(/volume trend/i)).toBeInTheDocument();
