@@ -1,8 +1,11 @@
 # ---------------------------------------------------------------------------
-# GetM9MonthlyCostForecast Service — Configuration Constants  (v2)
+# GetTPVForecast Service — Configuration Constants  (v2)
 #
 # All pipeline constants live here.  The training script (train.py) imports
 # these directly so the service and batch job always share the same values.
+#
+# Model: HuberRegressor in log-space → expm1 back-transform (no bias corr.)
+# Conformal: dollar-space residuals with dollar-weighted sample weights
 # ---------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -11,9 +14,9 @@ import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Pipeline constants — must be identical to those used when train.py ran
+# Pipeline constants
 # ---------------------------------------------------------------------------
-SUPPORTED_CONTEXT_LENS: list[int] = [1, 3, 6]  # all accepted context lengths
+SUPPORTED_CONTEXT_LENS: list[int] = [1, 3, 6]
 MAX_CONTEXT_LEN: int = max(SUPPORTED_CONTEXT_LENS)
 HORIZON_LEN: int = 3       # months to forecast (t+1 … t+HORIZON_LEN)
 TARGET_COV: float = 0.90   # desired conformal coverage probability
@@ -21,19 +24,25 @@ MIN_POOL: int = 10          # minimum residuals / bucket members for conformal
 KNN_K: int = 10             # k for kNN pool mean computation in train.py
 
 # ---------------------------------------------------------------------------
+# Target column names
+# ---------------------------------------------------------------------------
+TARGET_COL: str = "total_processing_value"   # raw dollar TPV
+LOG_TARGET: str = "log_tpv"                  # log1p(total_processing_value)
+
+# ---------------------------------------------------------------------------
 # Guard against zero division for near-constant series
 # ---------------------------------------------------------------------------
 _VOL_EPS: float = 1e-6
 
 # ---------------------------------------------------------------------------
-# Stratification guard (matches notebook production values)
+# Stratification guard
 # ---------------------------------------------------------------------------
-VOL_MIN_GAIN_ABS: float = 0.05           # absolute minimum width gain (pp)
-VOL_MIN_GAIN_REL: float = 0.01           # relative gain factor × flat_avg_hw
-VOL_TEST_COV_SLACK: float = 0.03         # coverage floor = TARGET_COV − this
+VOL_MIN_GAIN_ABS: float = 0.05
+VOL_MIN_GAIN_REL: float = 0.01
+VOL_TEST_COV_SLACK: float = 0.03
 
 # ---------------------------------------------------------------------------
-# Candidate stratification schemes (auto‑selected at training time)
+# Candidate stratification schemes (auto-selected at training time)
 # ---------------------------------------------------------------------------
 VOL_BUCKET_SCHEMES: dict[str, list[float]] = {
     "low-mid-high_50_85":          [0.00, 0.50, 0.85, 1.00],
@@ -45,21 +54,23 @@ VOL_BUCKET_SCHEMES: dict[str, list[float]] = {
 }
 
 # ---------------------------------------------------------------------------
-# Feature names (v2 pipeline)
+# Feature names — v6 pipeline (same feature set as v3)
 # ---------------------------------------------------------------------------
 MODEL_FEAT_NAMES: list[str] = [
     "context_mean", "context_std", "momentum", "pool_mean",
-    "intra_std", "log_txn_count", "mean_median_gap",
+    "txn_amount_std", "log_txn_count", "avg_median_txn_gap",
+    "last_month", "log_avg_txn_val", "momentum_tc", "momentum_atv",
 ]
 
 RISK_FEAT_NAMES: list[str] = [
-    "intra_cov", "mean_median_gap", "log_txn_count",
+    "intra_txn_cov", "avg_median_txn_gap", "log_txn_count",
     "cost_type_hhi", "log_avg_txn_val", "txn_amount_cov",
     "pool_mean_gap_ratio", "ctx_to_knn_gap_ratio", "ctx_cov",
+    "tc_cov", "atv_cov",
 ]
 
 # ---------------------------------------------------------------------------
-# GBR risk model hyper-parameters (shared with train.py)
+# GBR risk model hyper-parameters
 # ---------------------------------------------------------------------------
 GBR_N_ESTIMATORS: int = 120
 GBR_LEARNING_RATE: float = 0.05
@@ -70,37 +81,34 @@ GBR_RANDOM_STATE: int = 4121
 
 # ---------------------------------------------------------------------------
 # Supported MCCs
-# Artifacts must exist under ARTIFACTS_BASE_PATH/{mcc}/{ctx_len}/ for each entry.
 # ---------------------------------------------------------------------------
 SUPPORTED_MCCS: list[int] = [5411]
 
 # ---------------------------------------------------------------------------
-# Artifact storage (local filesystem for PoC)
-# Override via env-var ARTIFACTS_BASE_PATH for Docker / CI usage.
+# Artifact storage
 # ---------------------------------------------------------------------------
 ARTIFACTS_BASE_PATH: Path = Path(
     os.getenv("ARTIFACTS_BASE_PATH", str(Path(__file__).parent / "artifacts"))
 )
 
 # ---------------------------------------------------------------------------
-# Hot-reload
-# Service background thread polls config_snapshot.json mtime every N seconds.
+# Hot-reload interval
 # ---------------------------------------------------------------------------
 ARTIFACT_POLL_INTERVAL_S: float = float(
     os.getenv("ARTIFACT_POLL_INTERVAL_S", "60")
 )
 
 # ---------------------------------------------------------------------------
-# Training defaults (used by train.py CLI)
+# Training defaults
 # ---------------------------------------------------------------------------
-DEFAULT_WINDOW_YEARS: int = 3   # rolling training window length
+DEFAULT_WINDOW_YEARS: int = 3
 
 # ---------------------------------------------------------------------------
-# v2 CSV columns required for transaction-level features
+# Required CSV columns (v2 monthly CSV)
 # ---------------------------------------------------------------------------
 V2_REQUIRED_COLS: list[str] = [
-    "std_proc_cost_pct", "iqr_proc_cost_pct", "std_txn_amount",
-    "median_txn_amount", "n_unique_cost_types", "median_proc_cost_pct",
+    "std_txn_amount", "median_txn_amount", "avg_transaction_value",
+    "transaction_count", "total_processing_value",
 ]
 
 COST_TYPE_COLS: list[str] = [f"cost_type_{i}_pct" for i in range(1, 62)]

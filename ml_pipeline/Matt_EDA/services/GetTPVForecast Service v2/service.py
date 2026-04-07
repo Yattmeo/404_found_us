@@ -1,21 +1,21 @@
 """
-GetM9MonthlyCostForecast — v2 inference service.
+GetTPVForecast — v2 inference service.
 
 v2 simplifies the API: the caller sends raw transaction records and basic
 forecast parameters.  The service handles all feature engineering internally:
 
-  1. Aggregate raw transactions into monthly summaries (computing
-     avg_proc_cost_pct = mean(proc_cost / amount) per month).
+  1. Aggregate raw transactions into monthly summaries.
   2. Query the reference database to compute flat / kNN pool means and
      discover peer merchant IDs.
   3. Build model + risk feature vectors.
-  4. Predict & wrap in conformal intervals.
+  4. Predict & wrap in dollar-space conformal intervals.
 
-Model pipeline (unchanged):
-  - Target: avg_proc_cost_pct
-  - Regressor: HuberRegressor with inverse-pool-mean sample weights
-  - Conformal: absolute residuals (|actual − pred|)
-  - Risk model: GBR on 9 risk features → stratified conformal width mapping
+Model pipeline (unchanged from v1 / notebook v6):
+  - Target: log_tpv = log1p(total_processing_value)
+  - Regressor: HuberRegressor in log-space with dollar-weighted sample weights
+  - Back-transform: expm1(pred) — no bias correction (targets median)
+  - Conformal: dollar-space residuals (|actual_dollar - pred_dollar|)
+  - Risk model: GBR on 11 risk features → stratified conformal width mapping
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from config import (
     ARTIFACTS_BASE_PATH,
     HORIZON_LEN,
     KNN_K,
+    LOG_TARGET,
     MIN_POOL,
     SUPPORTED_CONTEXT_LENS,
     SUPPORTED_MCCS,
@@ -53,9 +54,9 @@ from config import (
 from models import (
     ConformalMetadata,
     ForecastMonth,
-    M9ForecastRequest,
-    M9ForecastResponse,
     ProcessMetadata,
+    TPVForecastRequest,
+    TPVForecastResponse,
 )
 from repository import MerchantRepository
 
@@ -70,12 +71,11 @@ class _MonthSummary:
 
     year: int
     month: int
-    avg_proc_cost_pct: float
-    std_proc_cost_pct: float
-    median_proc_cost_pct: float
+    total_processing_value: float
     transaction_count: int
     avg_transaction_value: float
     std_txn_amount: float
+    median_txn_amount: float
     cost_type_pcts: Optional[Dict[str, float]] = None
 
 
@@ -85,18 +85,18 @@ class _MonthSummary:
 
 @dataclass
 class ArtifactBundle:
-    """All trained artifacts for one MCC at one context length, loaded from disk."""
+    """All trained artifacts for one MCC × context_len."""
 
     context_len: int
     models: List[HuberRegressor]            # length == HORIZON_LEN
     scaler: StandardScaler
-    cal_residuals: Dict[int, List[float]]   # merchant_id → list of max-over-horizon abs residuals
-    global_q90: float
-    risk_models: List[GradientBoostingRegressor]  # length == HORIZON_LEN
+    cal_residuals: Dict[int, List[float]]   # merchant_id → dollar residuals
+    global_q90: float                       # dollar-space q90
+    risk_models: List[GradientBoostingRegressor]
     strat_enabled: bool
     strat_scheme: Optional[str]
-    strat_knot_x: Optional[np.ndarray]      # risk-score knots for interp
-    strat_q_vals: Optional[np.ndarray]       # corresponding q values for interp
+    strat_knot_x: Optional[np.ndarray]
+    strat_q_vals: Optional[np.ndarray]
     config_snapshot: dict
     loaded_mtime: float = field(default=0.0)
 
@@ -106,7 +106,7 @@ class ArtifactBundle:
 
 
 # ---------------------------------------------------------------------------
-# Artifact loading helpers
+# Artifact loading
 # ---------------------------------------------------------------------------
 
 def _artifact_dir(mcc: int, ctx_len: int) -> Path:
@@ -114,7 +114,6 @@ def _artifact_dir(mcc: int, ctx_len: int) -> Path:
 
 
 def _load_bundle(mcc: int, ctx_len: int) -> ArtifactBundle:
-    """Load all artifact files for one (mcc, ctx_len) from disk."""
     d = _artifact_dir(mcc, ctx_len)
     snapshot_path = d / "config_snapshot.json"
 
@@ -154,7 +153,6 @@ def _load_bundle(mcc: int, ctx_len: int) -> ArtifactBundle:
 
 # ---------------------------------------------------------------------------
 # Artifact cache with hot-reload
-# Key: (mcc, ctx_len)
 # ---------------------------------------------------------------------------
 
 _ARTIFACT_CACHE: Dict[Tuple[int, int], ArtifactBundle] = {}
@@ -171,13 +169,12 @@ def set_repository(repo: MerchantRepository) -> None:
 
 
 def _init_cache() -> None:
-    """Load artifacts for all SUPPORTED_MCCS × SUPPORTED_CONTEXT_LENS."""
     for mcc in SUPPORTED_MCCS:
         for ctx_len in SUPPORTED_CONTEXT_LENS:
             d = _artifact_dir(mcc, ctx_len)
             if not (d / "config_snapshot.json").exists():
                 print(
-                    f"[GetM9] WARNING: no artifacts for MCC {mcc} ctx={ctx_len} "
+                    f"[TPV] WARNING: no artifacts for MCC {mcc} ctx={ctx_len} "
                     f"at {d} — skipping"
                 )
                 continue
@@ -185,13 +182,12 @@ def _init_cache() -> None:
             with _CACHE_LOCK:
                 _ARTIFACT_CACHE[(mcc, ctx_len)] = bundle
             print(
-                f"[GetM9] Loaded artifacts for MCC {mcc} ctx={ctx_len}  "
+                f"[TPV] Loaded artifacts for MCC {mcc} ctx={ctx_len}  "
                 f"trained_at={bundle.trained_at}  strat={bundle.strat_enabled}"
             )
 
 
 def _poll_artifacts() -> None:
-    """Background thread: check for updated artifacts every ARTIFACT_POLL_INTERVAL_S."""
     while True:
         time.sleep(ARTIFACT_POLL_INTERVAL_S)
         for (mcc, ctx_len) in list(_ARTIFACT_CACHE.keys()):
@@ -205,18 +201,17 @@ def _poll_artifacts() -> None:
                     with _CACHE_LOCK:
                         _ARTIFACT_CACHE[(mcc, ctx_len)] = bundle
                     print(
-                        f"[GetM9] Hot-reloaded artifacts for MCC {mcc} ctx={ctx_len}  "
+                        f"[TPV] Hot-reloaded artifacts for MCC {mcc} ctx={ctx_len}  "
                         f"trained_at={bundle.trained_at}"
                     )
             except Exception as exc:  # noqa: BLE001
                 print(
-                    f"[GetM9] WARNING: artifact reload failed for "
+                    f"[TPV] WARNING: artifact reload failed for "
                     f"MCC {mcc} ctx={ctx_len}: {exc}"
                 )
 
 
 def start_artifact_watcher() -> None:
-    """Start the hot-reload background thread (daemon so it does not block shutdown)."""
     t = threading.Thread(target=_poll_artifacts, daemon=True, name="artifact-watcher")
     t.start()
 
@@ -231,11 +226,8 @@ def _aggregate_transactions(
     """
     Convert raw transaction records into sorted monthly summaries.
 
-    Each record should have at least ``transaction_date``, ``amount``,
-    and ``proc_cost``.  Optional: ``cost_type_ID``.
-
-    The target variable ``avg_proc_cost_pct`` is computed as
-    mean(proc_cost / amount) across transactions in each month.
+    Each record should have at least ``transaction_date`` and ``amount``.
+    Optional: ``cost_type_ID``.
     """
     df = pd.DataFrame(records)
     if df.empty:
@@ -250,26 +242,17 @@ def _aggregate_transactions(
         raise ValueError("No valid dates in onboarding_merchant_txn_df.")
 
     df["amount"] = pd.to_numeric(df.get("amount"), errors="coerce").fillna(0.0)
-    df["proc_cost"] = pd.to_numeric(df.get("proc_cost"), errors="coerce").fillna(0.0)
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
 
-    # Per-transaction proc_cost_pct (guard against zero-amount)
-    safe_amount = df["amount"].replace(0.0, np.nan)
-    df["proc_cost_pct"] = (df["proc_cost"] / safe_amount).fillna(0.0)
-
     summaries: List[_MonthSummary] = []
     for (yr, mo), grp in df.groupby(["year", "month"]):
-        pcts = grp["proc_cost_pct"].values.astype(float)
         amounts = grp["amount"].values.astype(float)
-        txn_count = len(grp)
-
-        avg_pct = float(pcts.mean()) if txn_count > 0 else 0.0
-        std_pct = float(pcts.std(ddof=0)) if txn_count > 1 else 0.0
-        med_pct = float(np.median(pcts)) if txn_count > 0 else 0.0
-
+        tpv = float(amounts.sum())
+        txn_count = len(amounts)
         avg_val = float(amounts.mean()) if txn_count > 0 else 0.0
         std_val = float(amounts.std(ddof=0)) if txn_count > 1 else 0.0
+        med_val = float(np.median(amounts)) if txn_count > 0 else 0.0
 
         # Cost-type percentages (for risk feature HHI)
         cost_type_pcts: Optional[Dict[str, float]] = None
@@ -283,12 +266,11 @@ def _aggregate_transactions(
         summaries.append(_MonthSummary(
             year=int(yr),
             month=int(mo),
-            avg_proc_cost_pct=avg_pct,
-            std_proc_cost_pct=std_pct,
-            median_proc_cost_pct=med_pct,
+            total_processing_value=tpv,
             transaction_count=txn_count,
             avg_transaction_value=avg_val,
             std_txn_amount=std_val,
+            median_txn_amount=med_val,
             cost_type_pcts=cost_type_pcts,
         ))
 
@@ -308,8 +290,8 @@ def _compute_pool_info(
 ) -> Tuple[float, float, List[int]]:
     """
     Query the reference database and return:
-      - flat_pool_mean  (avg_proc_cost_pct space)
-      - knn_pool_mean   (avg_proc_cost_pct space, cosine on cost-type fingerprint)
+      - flat_pool_mean  (log_tpv space)
+      - knn_pool_mean   (log_tpv space, cosine on cost-type fingerprint)
       - peer_merchant_ids  (list of kNN neighbor merchant IDs)
     """
     ref_txn = repo.load_transactions(mcc, card_types)
@@ -324,7 +306,6 @@ def _compute_pool_info(
     ref_txn["date"] = pd.to_datetime(ref_txn["date"], errors="coerce")
     ref_txn = ref_txn.dropna(subset=["date"])
     ref_txn["amount"] = pd.to_numeric(ref_txn.get("amount"), errors="coerce").fillna(0.0)
-    ref_txn["proc_cost"] = pd.to_numeric(ref_txn.get("proc_cost"), errors="coerce").fillna(0.0)
     ref_txn["year"] = ref_txn["date"].dt.year
     ref_txn["month"] = ref_txn["date"].dt.month
 
@@ -340,22 +321,17 @@ def _compute_pool_info(
     if snap.empty:
         return 0.0, 0.0, []
 
-    # Per-transaction proc_cost_pct
-    safe_amount = snap["amount"].replace(0.0, np.nan)
-    snap = snap.copy()
-    snap["proc_cost_pct"] = (snap["proc_cost"] / safe_amount).fillna(0.0)
-
-    # Monthly avg_proc_cost_pct per merchant
+    # Monthly TPV per merchant
     merchant_monthly = (
-        snap.groupby(["merchant_id", "year", "month"])["proc_cost_pct"]
-        .mean()
+        snap.groupby(["merchant_id", "year", "month"])["amount"]
+        .sum()
         .reset_index()
-        .rename(columns={"proc_cost_pct": "avg_proc_cost_pct"})
+        .rename(columns={"amount": "total_processing_value"})
     )
+    merchant_monthly["log_tpv"] = np.log1p(merchant_monthly["total_processing_value"])
 
     # Flat pool mean (all merchants, all months up to context end)
-    merchant_avg = merchant_monthly.groupby("merchant_id")["avg_proc_cost_pct"].mean()
-    flat_pool_mean = float(merchant_avg.mean())
+    flat_pool_mean = float(merchant_monthly["log_tpv"].mean())
 
     # ---- kNN pool mean via cost-type fingerprint ----
     cost_type_ids = repo.load_cost_type_ids()
@@ -389,6 +365,7 @@ def _compute_pool_info(
     for m in context_months:
         if m.cost_type_pcts:
             for key, val in m.cost_type_pcts.items():
+                # key is like "cost_type_38_pct" — extract the ID
                 ct_id = key.replace("cost_type_", "").replace("_pct", "")
                 onb_ct[ct_id] += val * m.transaction_count
                 total_ct_count += val * m.transaction_count
@@ -401,30 +378,240 @@ def _compute_pool_info(
         [{ct: onb_ct.get(ct, 0.0) for ct in cost_type_ids}]
     ).fillna(0.0)
 
-    # avg_proc_cost_pct mean per merchant (for pool-mean lookup)
-    common_mids = ref_pct.index.intersection(merchant_avg.index)
+    # log_tpv mean per merchant (for pool-mean lookup)
+    merchant_log_tpv = merchant_monthly.groupby("merchant_id")["log_tpv"].mean()
+
+    # Fit kNN
+    common_mids = ref_pct.index.intersection(merchant_log_tpv.index)
     if len(common_mids) < KNN_K + 1:
         return flat_pool_mean, flat_pool_mean, []
 
     ref_pct_aligned = ref_pct.loc[common_mids]
-    merchant_avg_aligned = merchant_avg.loc[common_mids]
+    merchant_log_tpv_aligned = merchant_log_tpv.loc[common_mids]
 
     nn = NearestNeighbors(
         n_neighbors=min(KNN_K + 1, len(common_mids)),
         metric="cosine",
     )
     nn.fit(ref_pct_aligned.values)
-    _, raw_idx = nn.kneighbors(
-        onb_vec.reindex(columns=ref_pct_aligned.columns, fill_value=0.0).values
-    )
+    _, raw_idx = nn.kneighbors(onb_vec.reindex(columns=ref_pct_aligned.columns, fill_value=0.0).values)
 
     mid_index = ref_pct_aligned.index.tolist()
     top_ids = [mid_index[i] for i in raw_idx[0]][:KNN_K]
 
-    knn_pool_mean = float(merchant_avg_aligned.loc[top_ids].mean()) if top_ids else flat_pool_mean
+    knn_pool_mean = float(merchant_log_tpv_aligned.loc[top_ids].mean()) if top_ids else flat_pool_mean
     peer_ids = [int(mid) for mid in top_ids]
 
     return flat_pool_mean, knn_pool_mean, peer_ids
+
+
+# ---------------------------------------------------------------------------
+# v6 model feature construction (11 features from log_tpv context)
+# ---------------------------------------------------------------------------
+
+def _build_feature_vector(
+    context_months: List[_MonthSummary],
+    pool_mean: float,
+) -> np.ndarray:
+    """
+    Build the 11-feature row used by TPV v1 (notebook v6/v3).
+
+    Returns shape (1, 11).
+    """
+    log_vals = np.array(
+        [np.log1p(m.total_processing_value) for m in context_months], dtype=float,
+    )
+    c_mean = float(np.mean(log_vals))
+    c_std = float(np.std(log_vals))
+    momentum = float(log_vals[-1] - c_mean)
+
+    # Transaction-level features
+    txn_amount_std = float(np.mean([m.std_txn_amount for m in context_months]))
+    log_txn = float(np.log1p(np.mean([m.transaction_count for m in context_months])))
+    avg_median_gap = float(np.mean(
+        [abs(m.avg_transaction_value - m.median_txn_amount) for m in context_months]
+    ))
+
+    # Recency + decomposition
+    last_month = float(log_vals[-1])
+    log_avg_txn_val = float(np.log1p(
+        np.mean([m.avg_transaction_value for m in context_months])
+    ))
+
+    # Component-level momentum
+    tc_vals = np.array(
+        [np.log1p(m.transaction_count) for m in context_months], dtype=float,
+    )
+    atv_vals = np.array(
+        [np.log1p(m.avg_transaction_value) for m in context_months], dtype=float,
+    )
+    mom_tc = float(tc_vals[-1] - np.mean(tc_vals))
+    mom_atv = float(atv_vals[-1] - np.mean(atv_vals))
+
+    return np.array(
+        [[c_mean, c_std, momentum, pool_mean,
+          txn_amount_std, log_txn, avg_median_gap,
+          last_month, log_avg_txn_val, mom_tc, mom_atv]],
+        dtype=float,
+    )
+
+
+# ---------------------------------------------------------------------------
+# v6 risk feature construction (11 features)
+# ---------------------------------------------------------------------------
+
+def _build_risk_vector(
+    context_months: List[_MonthSummary],
+    pool_mean: float,
+    knn_pool_mean: float,
+) -> np.ndarray:
+    """
+    Build the 11-feature risk vector.
+
+    Returns shape (1, 11).
+    """
+    log_vals = np.array(
+        [np.log1p(m.total_processing_value) for m in context_months], dtype=float,
+    )
+    c_mean = float(np.mean(log_vals))
+    _denom = c_mean + _VOL_EPS
+
+    # Category A: intra-month transaction-level
+    avg_txn_val = float(np.mean([m.avg_transaction_value for m in context_months]))
+    intra_txn_cov = float(np.mean([m.std_txn_amount for m in context_months])) / (avg_txn_val + _VOL_EPS)
+    avg_median_gap = float(np.mean(
+        [abs(m.avg_transaction_value - m.median_txn_amount) for m in context_months]
+    )) / (avg_txn_val + _VOL_EPS)
+    log_txn_count = float(np.log1p(np.mean([m.transaction_count for m in context_months])))
+
+    # Cost type HHI
+    ct_vals_list = []
+    for m in context_months:
+        if m.cost_type_pcts:
+            ct_vals_list.append(list(m.cost_type_pcts.values()))
+    if ct_vals_list:
+        avg_ct = np.mean(ct_vals_list, axis=0)
+        cost_type_hhi = float(np.sum(avg_ct ** 2))
+    else:
+        cost_type_hhi = 1.0
+
+    log_avg_txn_val = float(np.log1p(avg_txn_val))
+    txn_amount_cov = float(
+        np.mean([m.std_txn_amount for m in context_months])
+    ) / (avg_txn_val + _VOL_EPS)
+
+    # Category B: peer-relative
+    pool_gap = abs(c_mean - pool_mean) / (pool_mean + _VOL_EPS)
+    knn_gap = abs(c_mean - knn_pool_mean) / (knn_pool_mean + _VOL_EPS)
+
+    # Category C: graceful degrade
+    ctx_cov = float(np.std(log_vals)) / _denom
+
+    # Category D: component volatility
+    tc_vals = np.array(
+        [np.log1p(m.transaction_count) for m in context_months], dtype=float,
+    )
+    atv_vals = np.array(
+        [np.log1p(m.avg_transaction_value) for m in context_months], dtype=float,
+    )
+    tc_mean = float(np.mean(tc_vals))
+    atv_mean = float(np.mean(atv_vals))
+    tc_cov = float(np.std(tc_vals)) / (tc_mean + _VOL_EPS)
+    atv_cov = float(np.std(atv_vals)) / (atv_mean + _VOL_EPS)
+
+    return np.array(
+        [[intra_txn_cov, avg_median_gap, log_txn_count,
+          cost_type_hhi, log_avg_txn_val, txn_amount_cov,
+          pool_gap, knn_gap, ctx_cov,
+          tc_cov, atv_cov]],
+        dtype=float,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Conformal quantile helpers
+# ---------------------------------------------------------------------------
+
+def _adaptive_q(residuals: List[float], target: float = TARGET_COV) -> Optional[float]:
+    """Finite-sample conformal quantile: ceil((n+1)*target)/n."""
+    n = len(residuals)
+    level = math.ceil((n + 1) * target) / n
+    return float(np.quantile(residuals, level)) if level <= 1.0 else None
+
+
+def _compute_conformal_hw(
+    peer_merchant_ids: Optional[List[int]],
+    bundle: ArtifactBundle,
+    context_months: List[_MonthSummary],
+    pool_mean: float,
+    knn_pool_mean: float,
+    confidence_interval: float,
+) -> Tuple[float, int, str, Optional[float], Optional[str]]:
+    """
+    Three-tier dollar-space conformal half-width:
+      1. Local peer pool
+      2. GBR-stratified continuous width map
+      3. Global fallback
+    """
+    # Tier 1: local peer pool
+    peer_residuals: List[float] = []
+    if peer_merchant_ids:
+        for pid in peer_merchant_ids:
+            peer_residuals.extend(bundle.cal_residuals.get(pid, []))
+
+    if len(peer_residuals) >= MIN_POOL:
+        q = _adaptive_q(peer_residuals, target=confidence_interval)
+        if q is not None:
+            return float(q), len(peer_residuals), "local", None, None
+
+    # Compute risk score (needed for tier 2)
+    risk_vec = _build_risk_vector(context_months, pool_mean, knn_pool_mean)
+    scores = np.array(
+        [m.predict(risk_vec)[0] for m in bundle.risk_models], dtype=float,
+    )
+    risk_score = float(np.max(scores))
+
+    # Tier 2: GBR-stratified continuous width
+    if bundle.strat_enabled and bundle.strat_knot_x is not None:
+        hw = float(np.interp(
+            risk_score,
+            bundle.strat_knot_x,
+            bundle.strat_q_vals,
+            left=bundle.strat_q_vals[0],
+            right=bundle.strat_q_vals[-1],
+        ))
+        return hw, len(peer_residuals), "stratified", risk_score, bundle.strat_scheme
+
+    # Tier 3: global fallback
+    return (
+        bundle.global_q90,
+        len(peer_residuals),
+        "global_fallback",
+        risk_score,
+        None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bundle resolution
+# ---------------------------------------------------------------------------
+
+def _resolve_bundle(mcc: int, ctx_len: int) -> ArtifactBundle:
+    with _CACHE_LOCK:
+        bundle = _ARTIFACT_CACHE.get((mcc, ctx_len))
+    if bundle is not None:
+        return bundle
+
+    with _CACHE_LOCK:
+        available = sorted([cl for (m, cl) in _ARTIFACT_CACHE if m == mcc])
+    if not available:
+        raise ValueError(
+            f"MCC {mcc} has no loaded artifacts. "
+            f"Supported MCCs: {sorted(set(m for m, _ in _ARTIFACT_CACHE.keys()))}"
+        )
+    nearest = min(available, key=lambda cl: abs(cl - ctx_len))
+    with _CACHE_LOCK:
+        return _ARTIFACT_CACHE[(mcc, nearest)]
 
 
 # ---------------------------------------------------------------------------
@@ -441,204 +628,17 @@ def _select_context_window(
     n = len(months)
     valid = [cl for cl in sorted(SUPPORTED_CONTEXT_LENS, reverse=True) if cl <= n]
     if not valid:
+        # fewer months than the smallest supported length — use all
         return months
     chosen_len = valid[0]
     return months[-chosen_len:]
 
 
 # ---------------------------------------------------------------------------
-# v2 model feature construction (7 features)
-# ---------------------------------------------------------------------------
-
-def _build_feature_vector(
-    context_months: List[_MonthSummary],
-    pool_mean: float,
-) -> np.ndarray:
-    """
-    Build the 7-feature row used by M9 v2:
-        [context_mean, context_std, momentum, pool_mean,
-         intra_std, log_txn_count, mean_median_gap]
-
-    Returns shape (1, 7) for direct use with scaler.transform.
-    """
-    vals = np.array([m.avg_proc_cost_pct for m in context_months], dtype=float)
-    c_mean = float(np.mean(vals))
-    c_std = float(np.std(vals))
-    momentum = float(vals[-1] - c_mean)
-
-    # v2 transaction-level features
-    intra_std = float(np.mean([m.std_proc_cost_pct for m in context_months]))
-    log_txn = float(np.log1p(np.mean([m.transaction_count for m in context_months])))
-    medians = np.array([m.median_proc_cost_pct for m in context_months], dtype=float)
-    mean_median_gap = float(np.mean(np.abs(vals - medians)))
-
-    return np.array(
-        [[c_mean, c_std, momentum, pool_mean, intra_std, log_txn, mean_median_gap]],
-        dtype=float,
-    )
-
-
-# ---------------------------------------------------------------------------
-# v2 risk feature construction (9 features)
-# ---------------------------------------------------------------------------
-
-def _build_risk_vector(
-    context_months: List[_MonthSummary],
-    pool_mean: float,
-    knn_pool_mean: float,
-) -> np.ndarray:
-    """
-    Build the 9-feature risk vector used by v2 GBR models:
-        [intra_cov, mean_median_gap, log_txn_count, cost_type_hhi,
-         log_avg_txn_val, txn_amount_cov, pool_mean_gap_ratio,
-         ctx_to_knn_gap_ratio, ctx_cov]
-
-    Returns shape (1, 9).
-    """
-    vals = np.array([m.avg_proc_cost_pct for m in context_months], dtype=float)
-    c_mean = float(np.mean(vals))
-    _denom = c_mean + _VOL_EPS
-
-    # Category A: intra-month transaction-level
-    intra_cov = float(np.mean([m.std_proc_cost_pct for m in context_months])) / _denom
-    medians = np.array([m.median_proc_cost_pct for m in context_months], dtype=float)
-    mean_median_gap = float(np.mean(np.abs(vals - medians))) / _denom
-    log_txn_count = float(np.log1p(np.mean([m.transaction_count for m in context_months])))
-
-    # Cost type HHI
-    ct_vals_list = []
-    for m in context_months:
-        if m.cost_type_pcts:
-            ct_vals_list.append(list(m.cost_type_pcts.values()))
-    if ct_vals_list:
-        avg_ct = np.mean(ct_vals_list, axis=0)
-        cost_type_hhi = float(np.sum(avg_ct ** 2))
-    else:
-        cost_type_hhi = 1.0
-
-    avg_txn_val = float(np.mean([m.avg_transaction_value for m in context_months]))
-    log_avg_txn_val = float(np.log1p(avg_txn_val))
-    txn_amount_cov = float(
-        np.mean([m.std_txn_amount for m in context_months])
-    ) / (avg_txn_val + _VOL_EPS)
-
-    # Category B: peer-relative
-    pool_gap = abs(c_mean - pool_mean) / (pool_mean + _VOL_EPS)
-    knn_gap = abs(c_mean - knn_pool_mean) / (knn_pool_mean + _VOL_EPS)
-
-    # Category C: graceful degrade
-    ctx_cov = float(np.std(vals)) / _denom
-
-    return np.array(
-        [[intra_cov, mean_median_gap, log_txn_count, cost_type_hhi,
-          log_avg_txn_val, txn_amount_cov, pool_gap, knn_gap, ctx_cov]],
-        dtype=float,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Conformal quantile helpers
-# ---------------------------------------------------------------------------
-
-def _adaptive_q(residuals: List[float], target: float = TARGET_COV) -> Optional[float]:
-    """
-    Finite-sample conformal quantile at level ceil((n+1)*target)/n.
-    Returns None when the level exceeds 1.0 (pool too small to guarantee coverage).
-    """
-    n = len(residuals)
-    level = math.ceil((n + 1) * target) / n
-    return float(np.quantile(residuals, level)) if level <= 1.0 else None
-
-
-def _compute_conformal_hw(
-    peer_merchant_ids: Optional[List[int]],
-    bundle: ArtifactBundle,
-    context_months: List[_MonthSummary],
-    pool_mean: float,
-    knn_pool_mean: float,
-    confidence_interval: float,
-) -> Tuple[float, int, str, Optional[float], Optional[str]]:
-    """
-    Determine the conformal half-width using the three-tier fallback chain:
-
-      1. Local  — adaptive_q on calibration residuals of peer merchants (>= MIN_POOL)
-      2. GBR-stratified — continuous width mapping from risk score (if strat_enabled)
-      3. Global fallback — q90 of the entire calibration set
-
-    Returns (hw, pool_size, conformal_mode, risk_score, strat_scheme).
-    """
-    # ── Tier 1: local peer pool ──────────────────────────────────────────────
-    peer_residuals: List[float] = []
-    if peer_merchant_ids:
-        for pid in peer_merchant_ids:
-            peer_residuals.extend(bundle.cal_residuals.get(pid, []))
-
-    if len(peer_residuals) >= MIN_POOL:
-        q = _adaptive_q(peer_residuals, target=confidence_interval)
-        if q is not None:
-            return float(q), len(peer_residuals), "local", None, None
-
-    # ── Compute risk score (needed for tier 2) ───────────────────────────────
-    risk_vec = _build_risk_vector(context_months, pool_mean, knn_pool_mean)
-    scores = np.array(
-        [m.predict(risk_vec)[0] for m in bundle.risk_models], dtype=float
-    )
-    risk_score = float(np.max(scores))
-
-    # ── Tier 2: GBR-stratified continuous width mapping ──────────────────────
-    if bundle.strat_enabled and bundle.strat_knot_x is not None:
-        hw = float(np.interp(
-            risk_score,
-            bundle.strat_knot_x,
-            bundle.strat_q_vals,
-            left=bundle.strat_q_vals[0],
-            right=bundle.strat_q_vals[-1],
-        ))
-        return hw, len(peer_residuals), "stratified", risk_score, bundle.strat_scheme
-
-    # ── Tier 3: global fallback ──────────────────────────────────────────────
-    return (
-        bundle.global_q90,
-        len(peer_residuals),
-        "global_fallback",
-        risk_score,
-        None,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Bundle resolution
-# ---------------------------------------------------------------------------
-
-def _resolve_bundle(
-    mcc: int, ctx_len: int
-) -> ArtifactBundle:
-    """Find the best matching bundle for the given context length."""
-    with _CACHE_LOCK:
-        bundle = _ARTIFACT_CACHE.get((mcc, ctx_len))
-    if bundle is not None:
-        return bundle
-
-    # Fall back to nearest supported context length
-    with _CACHE_LOCK:
-        available = sorted(
-            [cl for (m, cl) in _ARTIFACT_CACHE if m == mcc],
-        )
-    if not available:
-        raise ValueError(
-            f"MCC {mcc} has no loaded artifacts. "
-            f"Supported MCCs: {sorted(set(m for m, _ in _ARTIFACT_CACHE.keys()))}"
-        )
-    nearest = min(available, key=lambda cl: abs(cl - ctx_len))
-    with _CACHE_LOCK:
-        return _ARTIFACT_CACHE[(mcc, nearest)]
-
-
-# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def get_monthly_cost_forecast(req: M9ForecastRequest) -> M9ForecastResponse:
+def get_tpv_forecast(req: TPVForecastRequest) -> TPVForecastResponse:
     generated_at = datetime.now(timezone.utc)
 
     # 1. Aggregate raw transactions into monthly summaries
@@ -666,22 +666,25 @@ def get_monthly_cost_forecast(req: M9ForecastRequest) -> M9ForecastResponse:
         context_months=context_months,
     )
 
-    # 5. Build v2 model features
-    vals = [m.avg_proc_cost_pct for m in context_months]
-    c_mean = float(np.mean(vals))
-    c_std = float(np.std(vals))
-    momentum = float(vals[-1] - c_mean)
+    # 5. Build features (log-space)
+    log_vals = [np.log1p(m.total_processing_value) for m in context_months]
+    c_mean = float(np.mean(log_vals))
+    momentum = float(log_vals[-1] - c_mean)
+    c_mean_dollar = float(np.expm1(c_mean))
 
     X_raw = _build_feature_vector(context_months, knn_pool_mean)
     X_scaled = bundle.scaler.transform(X_raw)
 
-    # 6. Predict HORIZON_LEN steps
-    point_forecasts = np.array(
+    # 6. Predict HORIZON_LEN steps in log-space
+    log_preds = np.array(
         [bundle.models[h].predict(X_scaled)[0] for h in range(req.horizon_months)],
         dtype=float,
     )
 
-    # 7. Conformal half-width
+    # 7. Back-transform to dollars: expm1(pred) — no bias correction
+    dollar_preds = np.expm1(log_preds)
+
+    # 8. Dollar-space conformal half-width
     hw, pool_size, conformal_mode, risk_score, strat_scheme = _compute_conformal_hw(
         peer_merchant_ids=peer_ids,
         bundle=bundle,
@@ -691,20 +694,19 @@ def get_monthly_cost_forecast(req: M9ForecastRequest) -> M9ForecastResponse:
         confidence_interval=req.confidence_interval,
     )
 
-    # 8. Assemble forecast months
+    # 9. Assemble forecast months (dollar intervals, clipped at 0)
     forecast = [
         ForecastMonth(
             month_index=h + 1,
-            proc_cost_pct_mid=float(point_forecasts[h]),
-            proc_cost_pct_ci_lower=max(0.0, float(point_forecasts[h]) - hw),
-            proc_cost_pct_ci_upper=float(point_forecasts[h]) + hw,
+            tpv_mid=float(dollar_preds[h]),
+            tpv_ci_lower=max(0.0, float(dollar_preds[h]) - hw),
+            tpv_ci_upper=float(dollar_preds[h]) + hw,
         )
         for h in range(req.horizon_months)
     ]
 
-    # 9. Assemble metadata
     conformal_meta = ConformalMetadata(
-        half_width=hw,
+        half_width_dollars=hw,
         conformal_mode=conformal_mode,
         pool_size=pool_size,
         risk_score=risk_score,
@@ -713,8 +715,8 @@ def get_monthly_cost_forecast(req: M9ForecastRequest) -> M9ForecastResponse:
 
     process_meta = ProcessMetadata(
         context_len_used=ctx_len,
-        context_mean=c_mean,
-        context_std=c_std,
+        context_mean_log_tpv=c_mean,
+        context_mean_dollar=c_mean_dollar,
         momentum=momentum,
         pool_mean_used=knn_pool_mean,
         mcc=req.mcc,
@@ -725,7 +727,7 @@ def get_monthly_cost_forecast(req: M9ForecastRequest) -> M9ForecastResponse:
         strat_enabled=bundle.strat_enabled,
     )
 
-    return M9ForecastResponse(
+    return TPVForecastResponse(
         forecast=forecast,
         conformal_metadata=conformal_meta,
         process_metadata=process_meta,

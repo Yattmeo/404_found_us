@@ -12,9 +12,9 @@ from config import HORIZON_LEN, TARGET_COV
 # Request types
 # ---------------------------------------------------------------------------
 
-class M9ForecastRequest(BaseModel):
+class TPVForecastRequest(BaseModel):
     """
-    Input for POST /GetM9MonthlyCostForecast.
+    Input for POST /GetTPVForecast.
 
     The caller provides raw transaction records for the onboarding merchant
     and basic forecast parameters.  The service handles all feature
@@ -26,8 +26,8 @@ class M9ForecastRequest(BaseModel):
         min_length=1,
         description=(
             "Raw transaction records for the onboarding merchant.  "
-            "Each dict must contain at least: transaction_date, amount, proc_cost.  "
-            "Optional fields: cost_type_ID, card_type."
+            "Each dict must contain at least: transaction_date, amount.  "
+            "Optional fields: proc_cost, cost_type_ID, card_type."
         ),
     )
     mcc: int = Field(..., description="Merchant category code; must be in SUPPORTED_MCCS.")
@@ -62,36 +62,34 @@ class M9ForecastRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ForecastMonth(BaseModel):
-    """One forecast month with a conformal prediction interval."""
+    """One forecast month with a dollar-space conformal prediction interval."""
 
     month_index: int = Field(
-        ...,
-        description="1-based index after the context window (1 = first forecast month).",
+        ..., description="1-based index after the context window.",
     )
-    proc_cost_pct_mid: float = Field(..., description="Point forecast (model midpoint).")
-    proc_cost_pct_ci_lower: float = Field(
-        ..., description="Lower bound of the conformal prediction interval.",
+    tpv_mid: float = Field(
+        ..., description="Point forecast (dollars) — expm1 of log-space prediction.",
     )
-    proc_cost_pct_ci_upper: float = Field(
-        ..., description="Upper bound of the conformal prediction interval.",
+    tpv_ci_lower: float = Field(
+        ..., description="Lower bound of the dollar-space conformal interval.",
+    )
+    tpv_ci_upper: float = Field(
+        ..., description="Upper bound of the dollar-space conformal interval.",
     )
 
 
 class ConformalMetadata(BaseModel):
     """Explains how the prediction interval was constructed."""
 
-    half_width: float = Field(
-        ...,
-        description=(
-            "Conformal half-width applied symmetrically around the point forecast."
-        ),
+    half_width_dollars: float = Field(
+        ..., description="Dollar-space conformal half-width.",
     )
     conformal_mode: str = Field(
         ...,
         description=(
             "How the half-width was determined: "
-            "'local' (peer residuals ≥ MIN_POOL), "
-            "'stratified' (GBR-based risk-bucket q90), or "
+            "'local' (peer residuals >= MIN_POOL), "
+            "'stratified' (GBR risk-bucket), or "
             "'global_fallback' (entire calibration set)."
         ),
     )
@@ -99,50 +97,52 @@ class ConformalMetadata(BaseModel):
         ..., description="Number of calibration residuals in the peer pool used.",
     )
     risk_score: Optional[float] = Field(
-        default=None,
-        description="GBR-predicted risk score (max across horizon steps).",
+        default=None, description="GBR-predicted risk score (max across horizon).",
     )
     strat_scheme: Optional[str] = Field(
-        default=None,
-        description="Name of the stratification scheme applied, if any.",
+        default=None, description="Stratification scheme applied, if any.",
     )
 
 
 class ProcessMetadata(BaseModel):
     """Execution details and derived feature values for transparency."""
 
-    context_len_used: int = Field(
-        ..., description="Number of context months actually used.",
+    context_len_used: int
+    context_mean_log_tpv: float = Field(
+        ..., description="Mean log1p(TPV) over the context window.",
     )
-    context_mean: float = Field(..., description="Mean of the context avg_proc_cost_pct.")
-    context_std: float = Field(..., description="Std dev of the context avg_proc_cost_pct.")
+    context_mean_dollar: float = Field(
+        ..., description="expm1(context_mean_log_tpv) — approximate dollar mean.",
+    )
     momentum: float = Field(
-        ...,
-        description="Last context value minus context mean (velocity signal).",
+        ..., description="Last context log_tpv minus context mean.",
     )
     pool_mean_used: float = Field(
-        ..., description="kNN pool mean used as a model feature.",
+        ..., description="kNN pool mean (log_tpv) used as a model feature.",
     )
     mcc: int
-    model_variant: str = Field(default="m9_v2", description="Pipeline version identifier.")
+    model_variant: str = Field(
+        default="tpv_v1",
+        description="Pipeline version identifier.",
+    )
     horizon_months: int
     confidence_interval: float
     generated_at_utc: datetime
     artifact_trained_at: Optional[str] = Field(
         default=None,
-        description="ISO timestamp from config_snapshot.json indicating when the model was last trained.",
+        description="ISO timestamp from config_snapshot.json.",
     )
     strat_enabled: bool = Field(
         default=False,
-        description="Whether risk-score-based stratification passed the deployment guard for this context length.",
+        description="Whether risk-stratification passed deployment guard.",
     )
 
 
-class M9ForecastResponse(BaseModel):
-    """Full response from POST /GetM9MonthlyCostForecast."""
+class TPVForecastResponse(BaseModel):
+    """Full response from POST /GetTPVForecast."""
 
     forecast: List[ForecastMonth] = Field(
-        ..., description="One entry per horizon month (length == horizon_months)."
+        ..., description="One entry per horizon month.",
     )
     conformal_metadata: ConformalMetadata
     process_metadata: ProcessMetadata
