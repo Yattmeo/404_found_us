@@ -68,3 +68,4 @@ Thumbs.db
 
 # Logs
 *.log
+ml_pipeline/Matt_EDA/isolated_service_lab/data/isolated_services.sqlite
