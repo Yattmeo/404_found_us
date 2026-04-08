@@ -22,7 +22,6 @@ import math
 from collections import defaultdict
 from typing import Optional
 
-import httpx
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
@@ -32,7 +31,11 @@ from modules.cost_forecast.controller import get_cost_forecast_health, run_cost_
 from modules.cost_forecast.models import CostForecastRequest, ContextMonth
 from modules.knn_rate_quote.controller import run_get_composite_merchant, run_get_quote, run_knn_rate_quote
 from modules.knn_rate_quote.schemas import CompositeMerchantRequest, QuoteRequest
+from modules.profit_forecast.controller import run_profit_forecast_async
+from modules.profit_forecast.models import ProfitForecastRequest as ProfitForecastReq
 from modules.rate_optimisation.controller import run_rate_optimisation
+from modules.tpv_forecast.models import TpvContextMonth, TpvForecastRequest
+from modules.tpv_forecast.service import run_tpv_forecast
 from modules.tpv_prediction.controller import run_tpv_prediction
 from modules.volume_forecast.controller import run_volume_forecast
 from modules.volume_forecast.models import VolumeForecastRequest
@@ -470,13 +473,165 @@ async def get_cost_forecast_endpoint(request: Request):
         if is_legacy:
             return _m9_response_to_legacy(m9_result)
         return m9_result
-    except (httpx.HTTPStatusError, Exception) as exc:
+    except Exception as exc:
         # If M9 is in degraded mode, fall back to KNN-neighbour-mean cost estimate
         if is_legacy:
             fallback = _cost_forecast_fallback_from_weekly(body)
             if fallback is not None:
                 return fallback
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── Weekly → Monthly translation for TPV Huber forecast ───────────────────────
+
+_WEEKS_PER_MONTH = 52.0 / 12.0  # ≈ 4.333
+
+
+def _weekly_features_to_tpv_request(body: dict) -> TpvForecastRequest:
+    """
+    Convert legacy weekly-features payload → TpvForecastRequest (monthly context).
+
+    Groups the composite_weekly_features rows into calendar-month buckets
+    (same approximation used by the M9 converter) and computes:
+      • total_payment_volume  = mean(weekly TPV) × 4.33  [monthly dollar estimate]
+      • transaction_count     = round(mean(weekly txn count) × 4.33)
+      • avg_transaction_value = mean(weekly avg txn value)
+      • std_txn_amount        = mean(weekly avg txn value stdev)
+
+    Pool log-mean is derived from the context itself (no runtime KNN lookup).
+    """
+    weekly_features = body.get("composite_weekly_features", [])
+    mcc = int(body.get("mcc", 5411))
+
+    monthly_buckets: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for wf in weekly_features:
+        year = int(wf["calendar_year"])
+        week = int(wf["week_of_year"])
+        month = min(12, max(1, math.ceil(week * 7 / 30.44)))
+        monthly_buckets[(year, month)].append(wf)
+
+    context_months: list[TpvContextMonth] = []
+    for (year, month), weeks in sorted(monthly_buckets.items()):
+        n = len(weeks)
+        mean_weekly_tpv = sum(w.get("weekly_total_proc_value_mean", 0.0) for w in weeks) / n
+        monthly_tpv = mean_weekly_tpv * _WEEKS_PER_MONTH
+
+        mean_weekly_tc = sum(w.get("weekly_txn_count_mean", 1.0) for w in weeks) / n
+        monthly_tc = max(1, round(mean_weekly_tc * _WEEKS_PER_MONTH))
+
+        avg_txn_val = sum(w.get("weekly_avg_txn_value_mean", 0.0) for w in weeks) / n
+        std_txn = (sum(w.get("weekly_avg_txn_value_stdev", 0.0) ** 2 for w in weeks) / n) ** 0.5
+
+        context_months.append(TpvContextMonth(
+            year=year,
+            month=month,
+            total_payment_volume=monthly_tpv,
+            transaction_count=monthly_tc,
+            avg_transaction_value=avg_txn_val,
+            std_txn_amount=std_txn,
+        ))
+
+    if len(context_months) > 6:
+        context_months = context_months[-6:]
+
+    import numpy as np
+    log_means = [math.log1p(cm.total_payment_volume) for cm in context_months]
+    pool_log_mean = float(np.mean(log_means)) if log_means else 0.0
+
+    return TpvForecastRequest(
+        context_months=context_months,
+        pool_log_mean_at_context_end=pool_log_mean,
+        knn_pool_log_mean_at_context_end=pool_log_mean,
+        mcc=mcc,
+    )
+
+
+def _tpv_response_to_legacy(tpv_resp: dict) -> dict:
+    """
+    Translate monthly TPV forecast → 12-week legacy format (matches ForecastWeek schema).
+
+    Each monthly forecast is expanded into 4 weekly points via linear
+    interpolation, keeping the same shape the frontend and backend expect
+    from historical /GetVolumeForecast.
+    """
+    monthly = sorted(
+        tpv_resp.get("forecast", []),
+        key=lambda fm: fm.get("month_index", 0),
+    )
+
+    weekly_forecast = []
+    week_idx = 1
+    for i, fm in enumerate(monthly):
+        mid = fm.get("total_proc_value_mid", 0.0)
+        lo  = fm.get("total_proc_value_ci_lower", 0.0)
+        hi  = fm.get("total_proc_value_ci_upper", 0.0)
+
+        if i + 1 < len(monthly):
+            nm = monthly[i + 1]
+            n_mid, n_lo, n_hi = (nm["total_proc_value_mid"],
+                                  nm["total_proc_value_ci_lower"],
+                                  nm["total_proc_value_ci_upper"])
+        else:
+            n_mid, n_lo, n_hi = mid, lo, hi
+
+        for w in range(4):
+            t = w / 4.0
+            weekly_forecast.append({
+                "forecast_week_index":     week_idx,
+                "total_proc_value_mid":    mid + t * (n_mid - mid),
+                "total_proc_value_ci_lower": lo + t * (n_lo - lo),
+                "total_proc_value_ci_upper": hi + t * (n_hi - hi),
+            })
+            week_idx += 1
+
+    return {
+        "forecast": weekly_forecast,
+        "conformal_metadata": tpv_resp.get("conformal_metadata"),
+        "process_metadata":   tpv_resp.get("process_metadata"),
+    }
+
+
+@router.post("/GetTPVForecast", tags=["TPV Forecast Service (Huber v2)"])
+async def get_tpv_forecast_endpoint(request: Request):
+    """
+    Huber-based monthly TPV (Total Payment Volume) forecast.
+
+    Accepts BOTH:
+      • Native TpvForecastRequest format
+      • Legacy weekly-features pipeline format (composite_weekly_features, mcc)
+
+    Falls back to SARIMA-based volume forecast when no TPV artifacts are
+    available for the requested MCC (e.g. non-5411 merchants).
+    """
+    body = await request.json()
+    is_legacy = "composite_weekly_features" in body
+
+    try:
+        if is_legacy:
+            tpv_request = _weekly_features_to_tpv_request(body)
+        else:
+            tpv_request = TpvForecastRequest(**body)
+
+        result = run_tpv_forecast(tpv_request)
+
+        if is_legacy:
+            return _tpv_response_to_legacy(result)
+        return result
+
+    except Exception as tpv_exc:
+        # Graceful fallback: MCC has no TPV artifacts → use legacy SARIMA volume forecast
+        logger.warning(
+            "TPV Huber forecast failed (%s); falling back to SARIMA volume forecast.",
+            tpv_exc,
+        )
+        if is_legacy:
+            try:
+                from modules.volume_forecast.models import VolumeForecastRequest as VFR
+                vf_payload = VFR(**body)
+                return run_volume_forecast(vf_payload)
+            except Exception as sarima_exc:
+                raise HTTPException(status_code=400, detail=str(sarima_exc))
+        raise HTTPException(status_code=400, detail=str(tpv_exc))
 
 
 @router.post("/GetVolumeForecast", tags=["Volume Forecast Service"])
@@ -487,4 +642,18 @@ async def get_volume_forecast_endpoint(payload: VolumeForecastRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/GetProfitForecast", tags=["Profit Forecast Service (Monte Carlo)"])
+async def get_profit_forecast_endpoint(payload: ProfitForecastReq):
+    """
+    Monte Carlo profit forecast.
 
+    Accepts pre-computed cost and volume forecast outputs, runs independent
+    Monte Carlo simulation to derive profit distribution and profitability curve.
+    """
+    try:
+        result = run_profit_forecast_async(payload)
+        if hasattr(result, "__await__"):
+            result = await result
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

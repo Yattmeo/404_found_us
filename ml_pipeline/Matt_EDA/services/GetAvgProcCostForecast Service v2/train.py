@@ -733,8 +733,8 @@ def train(mcc: int, data_path: Path, window_years: int) -> None:
         (df["year"] > cutoff_year)
         | ((df["year"] == cutoff_year) & (df["month"] >= today.month))
     ]
-    window_start = f"{df['year'].min()}-{df['month'].min():02d}"
-    window_end = f"{df['year'].max()}-{df['month'].max():02d}"
+    window_start = f"{int(df['year'].min())}-{int(df['month'].min()):02d}"
+    window_end = f"{int(df['year'].max())}-{int(df['month'].max()):02d}"
     print(
         f"  Window: {window_start} → {window_end}  "
         f"({len(df):,} rows, {df['merchant_id'].nunique():,} merchants)"

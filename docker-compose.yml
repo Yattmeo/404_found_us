@@ -72,7 +72,6 @@
       - frontend
       - merchant-frontend
       - ml-service
-      - m9-forecast-service
     restart: unless-stopped
     networks:
       - ml-network
@@ -84,35 +83,12 @@
     container_name: ml-service
     environment:
       - DATABASE_URL=postgresql://pguser:pgpassword@postgres:5432/mldb
-      - M9_FORECAST_SERVICE_URL=http://m9-forecast-service:8092
     volumes:
       - ./ml_service:/app
       - "./KNN Demo Service/KNN Demo Service:/data/knn_source:ro"
     depends_on:
       - postgres
-      - m9-forecast-service
     restart: unless-stopped
-    networks:
-      - ml-network
-
-  m9-forecast-service:
-    build:
-      context: "./ml_pipeline/Matt_EDA/services/GetAvgProcCostForecast Service v2"
-      dockerfile: Dockerfile
-    container_name: m9-forecast-service
-    ports:
-      - "8092:8092"
-    volumes:
-      - "./ml_pipeline/Matt_EDA/services/GetAvgProcCostForecast Service v2/artifacts:/app/artifacts:ro"
-    environment:
-      - ARTIFACTS_BASE_PATH=/app/artifacts
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8092/health')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     networks:
       - ml-network
 

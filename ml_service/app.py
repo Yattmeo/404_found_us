@@ -21,6 +21,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
+from modules.m9_forecast.service import init_m9_cache, start_m9_watcher
+from modules.tpv_forecast.service import init_tpv_cache, start_tpv_watcher
 from routes import router
 
 
@@ -28,6 +30,12 @@ from routes import router
 async def lifespan(app: FastAPI):
     # Create tables on startup
     init_db()
+    # Load M9 cost forecast artifacts and start hot-reload watcher
+    init_m9_cache()
+    start_m9_watcher()
+    # Load TPV Huber forecast artifacts and start hot-reload watcher
+    init_tpv_cache()
+    start_tpv_watcher()
     yield
 
 

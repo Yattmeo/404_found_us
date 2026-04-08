@@ -1,38 +1,22 @@
 """
-Thin proxy controller for the standalone M9 forecast service container.
+M9 forecast controller — in-process artifact-based inference.
 
-The M9 v2 service runs as its own container (m9-forecast-service:8092)
-because it needs artifact files and a custom lifespan. This controller
-forwards validated requests via httpx.
+Previously a thin httpx proxy to a separate m9-forecast-service container.
+Now delegates to the local service module which loads artifacts from
+ml_service/artifacts/m9/{mcc}/{ctx_len}/.
 """
 from __future__ import annotations
 
 import logging
-import os
-
-import httpx
 
 from .models import M9ForecastRequest
+from .service import get_m9_health, init_m9_cache, run_m9_forecast, start_m9_watcher
 
 logger = logging.getLogger(__name__)
 
-M9_SERVICE_URL = os.getenv("M9_FORECAST_SERVICE_URL", "http://m9-forecast-service:8092")
-_TIMEOUT = 30.0
-
-
-async def run_m9_forecast(payload: M9ForecastRequest) -> dict:
-    """POST the validated request to the M9 v2 container and return its JSON."""
-    url = f"{M9_SERVICE_URL}/GetM9MonthlyCostForecast"
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(url, json=payload.model_dump())
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def get_m9_health() -> dict:
-    """GET the health endpoint of the M9 v2 container."""
-    url = f"{M9_SERVICE_URL}/health"
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.json()
+__all__ = [
+    "run_m9_forecast",
+    "get_m9_health",
+    "init_m9_cache",
+    "start_m9_watcher",
+]

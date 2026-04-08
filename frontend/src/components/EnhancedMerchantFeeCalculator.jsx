@@ -72,7 +72,9 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
     };
 
     const processingVolume =
-      typeof transactionSummary.total_volume === 'number'
+      typeof transactionSummary.monthly_volume === 'number' && transactionSummary.monthly_volume > 0
+        ? transactionSummary.monthly_volume
+        : typeof transactionSummary.total_volume === 'number'
         ? transactionSummary.total_volume
         : (typeof data?.calculation?.total_volume === 'number' ? data.calculation.total_volume : totalAmount);
 
@@ -159,7 +161,9 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
     }
 
     const processingVolume =
-      typeof transactionSummary.total_volume === 'number'
+      typeof transactionSummary.monthly_volume === 'number' && transactionSummary.monthly_volume > 0
+        ? transactionSummary.monthly_volume
+        : typeof transactionSummary.total_volume === 'number'
         ? transactionSummary.total_volume
         : (typeof data?.calculation?.total_volume === 'number' ? data.calculation.total_volume : totalAmount);
 

@@ -136,6 +136,8 @@ class MerchantQuoteService:
         card_types: list[str],
         onboarding_rows: list[dict],
         base_cost_rate: float | None = None,
+        fee_rate: float | None = None,
+        rate_grid_pct: list[float] | None = None,
     ) -> dict | None:
         if not onboarding_rows:
             return None
@@ -143,6 +145,7 @@ class MerchantQuoteService:
         composite_payload = None
         cost_payload = None
         volume_payload = None
+        profit_payload = None
 
         try:
             with httpx.Client(timeout=_ML_PIPELINE_TIMEOUT_S) as client:
@@ -180,7 +183,7 @@ class MerchantQuoteService:
 
                 try:
                     volume_resp = client.post(
-                        f"{_ML_SERVICE_URL}/ml/GetVolumeForecast",
+                        f"{_ML_SERVICE_URL}/ml/GetTPVForecast",
                         json={
                             "composite_weekly_features": weekly_features,
                             "onboarding_merchant_txn_df": onboarding_rows,
@@ -191,6 +194,26 @@ class MerchantQuoteService:
                     volume_payload = volume_resp.json()
                 except Exception as exc:
                     logger.warning("Volume forecast step failed (non-fatal): %s", exc)
+
+                # Monte Carlo profit forecast (requires both cost + volume)
+                if cost_payload and volume_payload and fee_rate is not None:
+                    try:
+                        profit_body = {
+                            "cost_service_output": cost_payload,
+                            "volume_service_output": volume_payload,
+                            "fee_rate": fee_rate,
+                            "mcc": mcc,
+                        }
+                        if rate_grid_pct:
+                            profit_body["rate_grid_pct"] = rate_grid_pct
+                        profit_resp = client.post(
+                            f"{_ML_SERVICE_URL}/ml/GetProfitForecast",
+                            json=profit_body,
+                        )
+                        profit_resp.raise_for_status()
+                        profit_payload = profit_resp.json()
+                    except Exception as exc:
+                        logger.warning("Profit forecast step failed (non-fatal): %s", exc)
 
         except Exception as exc:
             logger.warning("ML insights pipeline failed: %s", exc)
@@ -203,6 +226,7 @@ class MerchantQuoteService:
             "composite": composite_payload,
             "cost": cost_payload,
             "volume": volume_payload,
+            "profit": profit_payload,
         }
 
     @staticmethod
