@@ -229,7 +229,25 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       const txCount = input.length;
       const totalAmount = input.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
       const avgTicket = txCount > 0 ? totalAmount / txCount : 0;
-      return { txCount, totalAmount, avgTicket };
+
+      // Estimate monthly tx count from the date range so the backend
+      // receives a realistic per-month figure, not the raw CSV row count.
+      let monthlyTxCount = txCount;
+      if (txCount >= 2) {
+        const firstDateStr = input[0]?.transaction_date || input[0]?.date;
+        const lastDateStr = input[txCount - 1]?.transaction_date || input[txCount - 1]?.date;
+        if (firstDateStr && lastDateStr) {
+          const d0 = new Date(firstDateStr);
+          const d1 = new Date(lastDateStr);
+          if (!isNaN(d0) && !isNaN(d1)) {
+            const spanMonths = Math.max(1, Math.abs(d1 - d0) / (30.44 * 24 * 60 * 60 * 1000));
+            monthlyTxCount = Math.round(txCount / spanMonths);
+          }
+        }
+      }
+
+      const monthlyVolume = monthlyTxCount * avgTicket;
+      return { txCount: monthlyTxCount, totalAmount: monthlyVolume, avgTicket };
     }
 
     const txCount = Number(input?.totalTransactions || 0);

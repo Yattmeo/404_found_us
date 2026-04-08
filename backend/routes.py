@@ -392,6 +392,28 @@ def calculate_desired_margin(data: dict, db: Session = Depends(get_db)):
     return {"status": "success", "data": result}
 
 
+def _norm_ppf(p: float) -> float:
+    """Approximate inverse standard-normal CDF (probit).
+
+    Uses the rational approximation from Abramowitz & Stegun 26.2.23.
+    Accuracy ~4.5 × 10⁻⁴, sufficient for profitability curve fitting.
+    """
+    from math import log, sqrt as _sqrt
+
+    if p <= 0.0:
+        return -8.0
+    if p >= 1.0:
+        return 8.0
+    if abs(p - 0.5) < 1e-10:
+        return 0.0
+
+    t = _sqrt(-2.0 * log(p if p < 0.5 else 1.0 - p))
+    c0, c1, c2 = 2.515517, 0.802853, 0.010328
+    d1, d2, d3 = 1.432788, 0.189269, 0.001308
+    z = t - (c0 + c1 * t + c2 * t * t) / (1.0 + d1 * t + d2 * t * t + d3 * t * t * t)
+    return z if p >= 0.5 else -z
+
+
 @router.post("/calculations/desired-margin-details", tags=["Calculations"])
 def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     """
@@ -597,12 +619,48 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         cost_forecast = cost_payload.get("forecast", [])
         tpv_forecast = tpv_payload.get("forecast", [])
 
+        # If cost forecast is weekly fallback (has forecast_week_index, no month_index),
+        # aggregate every 4 weeks into 1 monthly item so charts show 3 months.
+        if (
+            cost_forecast
+            and cost_forecast[0].get("forecast_week_index") is not None
+            and cost_forecast[0].get("month_index") is None
+        ):
+            monthly_agg: list[dict] = []
+            for m_start in range(0, len(cost_forecast), 4):
+                chunk = cost_forecast[m_start : m_start + 4]
+                if not chunk:
+                    break
+                monthly_agg.append(
+                    {
+                        "month_index": len(monthly_agg) + 1,
+                        "proc_cost_pct_mid": sum(
+                            _safe_float(c.get("proc_cost_pct_mid"), 0.0) for c in chunk
+                        ) / len(chunk),
+                        "proc_cost_pct_ci_lower": sum(
+                            _safe_float(c.get("proc_cost_pct_ci_lower"), 0.0) for c in chunk
+                        ) / len(chunk),
+                        "proc_cost_pct_ci_upper": sum(
+                            _safe_float(c.get("proc_cost_pct_ci_upper"), 0.0) for c in chunk
+                        ) / len(chunk),
+                    }
+                )
+            cost_forecast = monthly_agg
+
+        def _month_label(month_offset: int) -> str:
+            """Return 'MM-YY' label for a month offset (1-based) from now."""
+            now = datetime.now(timezone.utc)
+            m = now.month + month_offset
+            y = now.year + (m - 1) // 12
+            m = ((m - 1) % 12) + 1
+            return f"{m:02d}-{y % 100:02d}"
+
         for item in cost_forecast:
             idx = int(item.get("month_index") or 0)
             cost_series.append(
                 {
                     "month_index": idx,
-                    "label": f"Month {idx}",
+                    "label": _month_label(idx) if idx > 0 else f"Month {idx}",
                     "mid": _safe_float(item.get("proc_cost_pct_mid"), 0.0),
                     "lower": _safe_float(item.get("proc_cost_pct_ci_lower"), 0.0),
                     "upper": _safe_float(item.get("proc_cost_pct_ci_upper"), 0.0),
@@ -614,7 +672,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             volume_series.append(
                 {
                     "week_index": idx,
-                    "label": f"Month {idx}",
+                    "label": _month_label(idx) if idx > 0 else f"Month {idx}",
                     "mid": _safe_float(item.get("tpv_mid"), 0.0),
                     "lower": _safe_float(item.get("tpv_ci_lower"), 0.0),
                     "upper": _safe_float(item.get("tpv_ci_upper"), 0.0),
@@ -640,13 +698,6 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 if avg_p_profitable > 0:
                     summary_profitability_pct = round(avg_p_profitable * 100.0, 2)
 
-                # Build profitability curve from Monte Carlo anchor point
-                # Use break_even_rate + MC spread to fit Gaussian CDF shape
-                break_even_rate = _safe_float(mc_summary.get("break_even_fee_rate"), recommended_rate * 0.9)
-                # σ calibrated so that the CDF equals avg_p_profitable at recommended_rate
-                from math import erf, sqrt as _sqrt
-                z_recommended = (recommended_rate - break_even_rate)
-                mc_sigma = max(z_recommended / max(_safe_float(mc_summary.get("avg_p_profitable"), 0.5) + 0.01, 0.01), 0.001)
         elif len(cost_series) > 0 and len(volume_series) > 0:
             # Fallback: derive profitability from cost + tpv series when no MC
             paired_len = min(len(cost_series), len(volume_series))
@@ -663,34 +714,67 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         if profit_payload and profit_payload.get("months"):
             mc_summary = profit_payload.get("summary", {})
             break_even_rate = _safe_float(mc_summary.get("break_even_fee_rate"), recommended_rate * 0.9)
-            anchor_p = _safe_float(mc_summary.get("avg_p_profitable"), 0.5)
-            # Fit σ: CDF(recommended_rate; break_even, σ) ≈ anchor_p
-            spread_sigma = max(abs(recommended_rate - break_even_rate) / max(anchor_p, 0.01), 0.0015)
 
-            default_rate_grid = [
-                1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
+            # P(profitable at rate r) = P(cost < r).
+            # Model cost as Gaussian with mean = avg cost_mid, σ from CI.
+            # This is INDEPENDENT of the user's fee rate — the cost distribution
+            # doesn't change based on what rate the merchant charges.
+            if cost_series:
+                avg_cost_mid = sum(c["mid"] for c in cost_series) / len(cost_series)
+            else:
+                avg_cost_mid = break_even_rate * 0.85
+
+            cost_hw_values = [
+                (c["upper"] - c["lower"]) / 2.0
+                for c in cost_series
+                if c["upper"] > c["lower"]
             ]
+            z_90 = 1.6449  # norm.ppf(0.95)
+            if cost_hw_values:
+                spread_sigma = max(
+                    (sum(cost_hw_values) / len(cost_hw_values)) / z_90, 0.0015
+                )
+            else:
+                spread_sigma = max(avg_cost_mid * 0.15, 0.0015)
+
+            # The curve center is the average cost — at rate = avg_cost_mid,
+            # there's a 50% chance cost will be below the rate.
+            effective_break_even = avg_cost_mid
+
+            # Build a dynamic rate grid that covers 1.5% → max(3.5%, recommended + 0.5%)
+            # with extra density around the break-even zone for a smooth S-curve.
+            grid_max = max(3.50, round(recommended_rate * 100.0, 2) + 0.50)
+            base_grid = set()
+            # Coarse: every 0.25% across the full range
+            step = 0.25
+            v = 1.50
+            while v <= grid_max + 1e-9:
+                base_grid.add(round(v, 2))
+                v += step
+            # Dense: every 0.10% within ±0.50% of effective_break_even
+            be_pct = effective_break_even * 100.0
+            dense_lo = max(1.50, be_pct - 0.50)
+            dense_hi = min(grid_max, be_pct + 0.50)
+            v = dense_lo
+            while v <= dense_hi + 1e-9:
+                base_grid.add(round(v, 2))
+                v += 0.10
+
             user_grid = data.get("rate_grid_pct")
             if isinstance(user_grid, list) and user_grid:
-                rate_grid = []
                 for value in user_grid:
                     try:
-                        rate_grid.append(float(value))
+                        base_grid.add(round(float(value), 2))
                     except (TypeError, ValueError):
-                        continue
-                if not rate_grid:
-                    rate_grid = default_rate_grid
-            else:
-                rate_grid = default_rate_grid
+                        pass
 
             recommended_rate_pct = round(recommended_rate * 100.0, 2)
-            if recommended_rate_pct not in rate_grid:
-                rate_grid.append(recommended_rate_pct)
-            rate_grid = sorted(set(rate_grid))
+            base_grid.add(recommended_rate_pct)
+            rate_grid = sorted(base_grid)
 
             for rate_pct in rate_grid:
                 rate_decimal = rate_pct / 100.0
-                probability_pct = MerchantQuoteService.normal_cdf(rate_decimal, break_even_rate, spread_sigma) * 100.0
+                probability_pct = MerchantQuoteService.normal_cdf(rate_decimal, effective_break_even, spread_sigma) * 100.0
                 profitability_pct = ((rate_decimal - break_even_rate) / max(break_even_rate, 0.001)) * 100.0
                 profitability_curve.append(
                     {
@@ -700,28 +784,30 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                     }
                 )
 
+            # Enforce monotonicity: probability must be non-decreasing with rate
+            for i in range(1, len(profitability_curve)):
+                if profitability_curve[i]["probability_pct"] < profitability_curve[i - 1]["probability_pct"]:
+                    profitability_curve[i]["probability_pct"] = profitability_curve[i - 1]["probability_pct"]
+
         elif len(cost_series) > 0 and len(volume_series) > 0:
             # Fallback profitability curve from cost + TPV series when no MC forecast
-            default_rate_grid = [
-                1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
-            ]
             recommended_rate_pct = round(recommended_rate * 100.0, 2)
+            grid_max = max(3.50, recommended_rate_pct + 0.50)
+            rate_grid_set: set[float] = set()
+            v = 1.50
+            while v <= grid_max + 1e-9:
+                rate_grid_set.add(round(v, 2))
+                v += 0.25
+            rate_grid_set.add(recommended_rate_pct)
+
             user_grid = data.get("rate_grid_pct")
             if isinstance(user_grid, list) and user_grid:
-                rate_grid = []
                 for value in user_grid:
                     try:
-                        rate_grid.append(float(value))
+                        rate_grid_set.add(round(float(value), 2))
                     except (TypeError, ValueError):
-                        continue
-                if not rate_grid:
-                    rate_grid = default_rate_grid
-            else:
-                rate_grid = default_rate_grid
-
-            if recommended_rate_pct not in rate_grid:
-                rate_grid.append(recommended_rate_pct)
-            rate_grid = sorted(set(rate_grid))
+                        pass
+            rate_grid = sorted(rate_grid_set)
 
             # Pre-compute rate-independent cost uncertainty spread for monotonic curve
             cost_uncertainty_spread = 0.0
@@ -776,6 +862,11 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                     }
                 )
 
+            # Enforce monotonicity on fallback curve
+            for i in range(1, len(profitability_curve)):
+                if profitability_curve[i]["probability_pct"] < profitability_curve[i - 1]["probability_pct"]:
+                    profitability_curve[i]["probability_pct"] = profitability_curve[i - 1]["probability_pct"]
+
         ml_context = {
             "k": int(composite_payload.get("k") or 0),
             "composite_merchant_id": composite_payload.get("composite_merchant_id"),
@@ -816,13 +907,17 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         if total_fees > 0:
             summary_profitability_pct = max(-100.0, min(100.0, (fallback_profitability / total_fees) * 100.0))
 
+    # Only apply the guardrail when the MC/fallback profit estimate is
+    # *positive but implausibly small* compared to the deterministic fee
+    # baseline.  When profit is negative (rate < cost), that is a valid
+    # result and must NOT be overwritten.
     if (
         estimated_profit_max is not None
+        and estimated_profit_min is not None
+        and estimated_profit_min >= 0.0
         and fallback_profit > 0
         and estimated_profit_max < (0.05 * fallback_profit)
     ):
-        # Guardrail: if forecast-based profit is orders of magnitude below the
-        # deterministic fee baseline, keep results on a realistic business scale.
         estimated_profit_min = fallback_profit * 0.75
         estimated_profit_max = fallback_profit * 1.25
 

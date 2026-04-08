@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from math import erf, sqrt
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -77,24 +77,40 @@ class MerchantQuoteService:
         safe_rate = max(effective_rate_pct / 100.0, 0.005)
         card_type = MerchantQuoteService._card_type_from_brands(brands)
 
-        # Build synthetic transactions at a realistic weekly cadence from aggregate inputs.
-        # This keeps avg_amount near avg_ticket while scaling weekly volume using monthly_txn_count.
-        weekly_txn_count = max(1, int(round(monthly_txn_count / 4.345)))
-        weekly_txn_count = min(weekly_txn_count, MerchantQuoteService.MAX_SYNTHETIC_TXNS_PER_WEEK)
+        # Build synthetic transactions that form two complete calendar months
+        # so the TPV forecast context sees full monthly volumes.
+        # Cap per-week row count for payload size, but scale per-txn amount
+        # so that total monthly volume faithfully represents the merchant.
+        actual_weekly_txn_count = max(1, int(round(monthly_txn_count / 4.345)))
+        weekly_txn_count = min(actual_weekly_txn_count, MerchantQuoteService.MAX_SYNTHETIC_TXNS_PER_WEEK)
 
-        for week_idx in range(8):
-            day = today - timedelta(days=(7 * (7 - week_idx)))
-            for _ in range(weekly_txn_count):
-                rows.append(
-                    {
-                        "transaction_date": day.isoformat(),
-                        "amount": round(avg_ticket, 2),
-                        "proc_cost": round(avg_ticket * safe_rate, 4),
-                        "cost_type_ID": 1,
-                        "card_type": card_type,
-                        "monthly_txn_count": monthly_txn_count,
-                    }
-                )
+        volume_scale = actual_weekly_txn_count / weekly_txn_count if weekly_txn_count > 0 else 1.0
+        scaled_amount = round(avg_ticket * volume_scale, 2)
+
+        # Place 4 weeks into each of the 2 prior calendar months so that the
+        # ML aggregation sees 2 complete months (no partial-month boundary).
+        # All dates stay within their calendar month (1st, 8th, 15th, 22nd).
+        month_dates = []
+        for offset in (2, 1):
+            m = today.month - offset
+            y = today.year + (m - 1) // 12
+            m = ((m - 1) % 12) + 1
+            month_dates.append((y, m))
+
+        for y, m in month_dates:
+            for wk_day in (1, 8, 15, 22):
+                day = date(y, m, wk_day)
+                for _ in range(weekly_txn_count):
+                    rows.append(
+                        {
+                            "transaction_date": day.isoformat(),
+                            "amount": scaled_amount,
+                            "proc_cost": round(scaled_amount * safe_rate, 4),
+                            "cost_type_ID": 1,
+                            "card_type": card_type,
+                            "monthly_txn_count": monthly_txn_count,
+                        }
+                    )
         return rows
 
     @staticmethod

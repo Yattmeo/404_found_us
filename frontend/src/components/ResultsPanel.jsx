@@ -14,9 +14,16 @@ const formatCurrency = (value) => {
   return num < 0 ? `-$${abs}` : `$${abs}`;
 };
 
-const buildSmoothPath = (coords) => {
+const buildSmoothPath = (coords, yMin = null, yMax = null) => {
   if (coords.length === 0) return '';
   if (coords.length === 1) return `M ${coords[0].x} ${coords[0].y}`;
+
+  const clampY = (y) => {
+    let v = y;
+    if (yMin !== null && v > yMin) v = yMin;   // SVG y-axis is inverted (lower y = higher value)
+    if (yMax !== null && v < yMax) v = yMax;
+    return v;
+  };
 
   let path = `M ${coords[0].x} ${coords[0].y}`;
   for (let i = 0; i < coords.length - 1; i += 1) {
@@ -26,9 +33,15 @@ const buildSmoothPath = (coords) => {
     const p3 = coords[i + 2] || p2;
 
     const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    let cp1y = p1.y + (p2.y - p0.y) / 6;
     const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    let cp2y = p2.y - (p3.y - p1.y) / 6;
+
+    if (yMin !== null || yMax !== null) {
+      cp1y = clampY(cp1y);
+      cp2y = clampY(cp2y);
+    }
+
     path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
   }
   return path;
@@ -230,7 +243,10 @@ const ProbabilityMiniChart = ({
     return ticks;
   })();
 
-  const path = buildSmoothPath(coords);
+  // Compute SVG y-coordinates for 0% and 100% to clamp the spline
+  const yAtMax = top;                              // 100% → top of chart (SVG y)
+  const yAtMin = top + usableH;                    // 0%  → bottom of chart (SVG y)
+  const path = buildSmoothPath(coords, yAtMin, yAtMax);
 
   const markerCoord = (() => {
     if (!Number.isFinite(markerX)) return null;
@@ -347,18 +363,28 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
   // Map backend profitability curve directly to chart points.
   // The backend already returns a correctly shaped S-curve with proper
   // probability values — no additional smoothing / capping / zeroing needed.
+  // Enforce monotonicity client-side as a safety net (probability must be
+  // non-decreasing as rate increases, and must never cross 0% or 100% twice).
   const directCurvePoints = (() => {
     if (!Array.isArray(results?.profitabilityCurve) || results.profitabilityCurve.length === 0) {
       return [];
     }
-    return results.profitabilityCurve
+    const raw = results.profitabilityCurve
       .map((point) => ({
         x: Number(point?.rate_pct),
-        y: Math.max(0, Math.min(99.5, Number(point?.probability_pct || 0))),
+        y: Math.max(0, Math.min(100, Number(point?.probability_pct || 0))),
         label: String(point?.rate_pct),
       }))
       .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
       .sort((a, b) => a.x - b.x);
+
+    // Enforce monotonicity: each point's y must be >= the previous
+    for (let i = 1; i < raw.length; i += 1) {
+      if (raw[i].y < raw[i - 1].y) {
+        raw[i].y = raw[i - 1].y;
+      }
+    }
+    return raw;
   })();
 
   return (
@@ -424,9 +450,9 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
               </div>
             </div>
 
-            {/* Suggested Rate */}
+            {/* Current Rate (or Suggested Rate when no current rate entered) */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-              <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
+              <p className="text-sm font-medium text-gray-700 mb-2">Current Rate:</p>
               <p className="text-4xl font-bold text-gray-900">
                 {results.suggestedRate !== null && results.suggestedRate !== undefined
                   ? `${Number(results.suggestedRate).toFixed(2)}%`
@@ -471,7 +497,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                     markerX={Number.isFinite(Number(results.suggestedRate)) ? Number(results.suggestedRate) : null}
                     markerLabel={
                       Number.isFinite(Number(results.suggestedRate))
-                        ? `Suggested ${Number(results.suggestedRate).toFixed(2)}%`
+                        ? `Current Rate ${Number(results.suggestedRate).toFixed(2)}%`
                         : null
                     }
                     points={directCurvePoints}

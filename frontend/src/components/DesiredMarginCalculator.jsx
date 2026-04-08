@@ -1,33 +1,22 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Upload, FileCheck, ArrowLeft, Download, AlertCircle, TrendingUp } from 'lucide-react';
-import DesiredMarginResults from './DesiredMarginResults';
+import { ArrowLeft, TrendingUp } from 'lucide-react';
+import ResultsPanel from './ResultsPanel';
+import DataUploadValidator from './DataUploadValidator';
 import ManualTransactionEntry from './ManualTransactionEntry';
 import MCCDropdown from './MCCDropdown';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/Tabs';
 import { Button } from './ui/Button';
 import { Label } from './ui/Label';
 import { Input } from './ui/Input';
-import * as XLSX from 'xlsx';
-import { desiredMarginAPI } from '../services/api';
-
-/**
- * RATES QUOTATION TOOL (Epic 1, Story 1.2)
- * * PURPOSE:
- * - Help sales team quickly generate merchant rate quotations
- * - Recommend optimal pricing based on merchant profile and desired margin
- * - Provide quotable rate ranges with confidence intervals
- */
+import { merchantFeeAPI, desiredMarginAPI } from '../services/api';
 
 const DesiredMarginCalculator = ({ onBackToLanding }) => {
-  const [fileName, setFileName] = useState('');
-  const [parsedData, setParsedData] = useState(null);
   const [results, setResults] = useState(null);
-  const [showResults, setShowResults] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [fileError, setFileError] = useState('');
-  const [dragActive, setDragActive] = useState(false);
+  const [dataValidated, setDataValidated] = useState(false);
+  const [transactionData, setTransactionData] = useState([]);
   const [activeTab, setActiveTab] = useState('upload');
+  const [isLoading, setIsLoading] = useState(false);
 
   const {
     register,
@@ -36,369 +25,344 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
     setValue,
     reset,
     formState: { errors },
-  } = useForm({
-    defaultValues: {
-      merchantId: '',
-      mcc: '',
-      feeStructure: '',
-      fixedFee: '',
-      desiredMargin: ''
-    }
-  });
+  } = useForm();
 
   const feeStructure = watch('feeStructure');
-  const merchantId = watch('merchantId');
-  const mcc = watch('mcc');
+  const currentRate = watch('currentRate');
+  const mccValue = watch('mcc');
+  const fixedFee = watch('fixedFee');
 
-  const normalizeDesiredMarginResults = (apiPayload, summaryData) => {
+  const clampProfitabilityPct = (value) => {
+    if (!Number.isFinite(value)) return null;
+    return Number(Math.max(-100, Math.min(100, value)).toFixed(2));
+  };
+
+  const normalizeCurrentRateResults = (apiPayload, formData, txCount, avgTicket, totalAmount) => {
     const envelope = apiPayload || {};
     const data = envelope?.data || {};
-    const summary = data?.summary || {};
+    const suggestedRate = typeof data?.applied_rate === 'number' ? data.applied_rate * 100 : null;
+    const marginBps = typeof data?.margin_bps === 'number' ? data.margin_bps : null;
+
+    const transactionCountForProfit =
+      typeof data?.transaction_count === 'number' ? data.transaction_count : txCount;
+    const fixedFeePerTxn =
+      typeof data?.fixed_fee === 'number'
+        ? data.fixed_fee
+        : (formData.fixedFee !== '' && formData.fixedFee !== undefined ? Number(formData.fixedFee) : 0.30);
+
+    const variableProfit =
+      typeof data?.margin_rate === 'number' && typeof data?.total_volume === 'number'
+        ? data.total_volume * data.margin_rate
+        : null;
+    const fixedFeeContribution =
+      typeof transactionCountForProfit === 'number' && Number.isFinite(fixedFeePerTxn)
+        ? transactionCountForProfit * fixedFeePerTxn
+        : 0;
+
+    const estimatedProfit =
+      typeof variableProfit === 'number' ? variableProfit + fixedFeeContribution : null;
+    const estimatedProfitMin = typeof estimatedProfit === 'number' ? estimatedProfit * 0.9 : null;
+    const estimatedProfitMax = typeof estimatedProfit === 'number' ? estimatedProfit * 1.1 : null;
+
+    const transactionSummary = {
+      transaction_count: typeof data?.transaction_count === 'number' ? data.transaction_count : txCount,
+      total_volume: typeof data?.total_volume === 'number' ? data.total_volume : totalAmount,
+      average_ticket: typeof data?.average_ticket === 'number' ? data.average_ticket : avgTicket,
+    };
+
+    const processingVolume =
+      typeof transactionSummary.monthly_volume === 'number' && transactionSummary.monthly_volume > 0
+        ? transactionSummary.monthly_volume
+        : typeof transactionSummary.total_volume === 'number'
+        ? transactionSummary.total_volume
+        : (typeof data?.calculation?.total_volume === 'number' ? data.calculation.total_volume : totalAmount);
+
+    let profitabilityPct = null;
+    const totalFees = typeof data?.total_fees === 'number' ? data.total_fees : null;
+    if (
+      typeof estimatedProfitMin === 'number' &&
+      typeof estimatedProfitMax === 'number' &&
+      typeof totalFees === 'number' &&
+      totalFees > 0
+    ) {
+      const midpointProfit = (estimatedProfitMin + estimatedProfitMax) / 2;
+      profitabilityPct = clampProfitabilityPct((midpointProfit / totalFees) * 100);
+    }
+
+    const averageTransactionSize =
+      typeof transactionSummary.average_ticket === 'number'
+        ? transactionSummary.average_ticket
+        : (typeof data?.calculation?.average_ticket === 'number' ? data.calculation.average_ticket : avgTicket);
+
+    const transactionCount =
+      typeof transactionSummary.transaction_count === 'number'
+        ? transactionSummary.transaction_count
+        : (typeof data?.calculation?.transaction_count === 'number' ? data.calculation.transaction_count : txCount);
 
     return {
-      suggestedRate: typeof summary.suggested_rate_pct === 'number' ? summary.suggested_rate_pct : null,
-      marginBps: typeof summary.margin_bps === 'number' ? summary.margin_bps : null,
-      estimatedProfitMin: typeof summary.estimated_profit_min === 'number' ? summary.estimated_profit_min : null,
-      estimatedProfitMax: typeof summary.estimated_profit_max === 'number' ? summary.estimated_profit_max : null,
-      transactionSummary: data?.transaction_summary || null,
-      costForecast: Array.isArray(data?.cost_forecast) ? data.cost_forecast : [],
-      volumeForecast: Array.isArray(data?.volume_forecast) ? data.volume_forecast : [],
-      profitabilityCurve: Array.isArray(data?.profitability_curve) ? data.profitability_curve : [],
-      mlContext: data?.ml_context || null,
-      calculation: data?.calculation || null,
-      parsedData: summaryData,
+      suggestedRate,
+      margin: marginBps,
+      estimatedProfit,
+      estimatedProfitMin,
+      estimatedProfitMax,
+      expectedATS: averageTransactionSize,
+      expectedVolume: processingVolume,
+      adoptionProbability: null,
+      profitability: profitabilityPct,
+      quotableRange: {
+        min: suggestedRate !== null ? Math.max(0, Number((suggestedRate - 0.1).toFixed(2))) : null,
+        max: suggestedRate !== null ? Number((suggestedRate + 0.1).toFixed(2)) : null,
+      },
+      processingVolume,
+      averageTransactionSize,
+      transactionCount,
+      currentRateProvided: !!formData.currentRate,
+      costForecast: [],
+      volumeForecast: [],
+      profitabilityCurve: [],
+      mlContext: null,
+      transactionSummary,
+      calculation: data,
     };
   };
 
-  const handleDownloadTemplate = () => {
-    const headers = 'transaction_date,merchant_id,mcc,amount';
-    const csvContent = headers;
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'merchant-transaction-template.csv');
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    URL.revokeObjectURL(url);
-  };
+  const normalizeRangeResults = (apiPayload, formData, txCount, avgTicket, totalAmount) => {
+    const envelope = apiPayload || {};
+    const data = envelope?.data || {};
+    const summary = data?.summary || {};
+    const calculation = data?.calculation || {};
+    const transactionSummary = data?.transaction_summary || {};
+    const profitabilityCurve = Array.isArray(data?.profitability_curve) ? data.profitability_curve : [];
+    const volumeForecast = Array.isArray(data?.volume_forecast) ? data.volume_forecast : [];
 
-  const handleDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
+    let suggestedRate = typeof summary.suggested_rate_pct === 'number' ? summary.suggested_rate_pct : null;
+    if (suggestedRate === null && typeof calculation?.recommended_rate === 'number') {
+      suggestedRate = calculation.recommended_rate * 100;
     }
-  };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      handleFileProcessing(file);
+    let marginBps = typeof summary.margin_bps === 'number' ? summary.margin_bps : null;
+    if (
+      marginBps === null &&
+      typeof calculation?.recommended_rate === 'number' &&
+      typeof calculation?.base_cost_rate === 'number'
+    ) {
+      marginBps = Math.round((calculation.recommended_rate - calculation.base_cost_rate) * 10000);
     }
-  };
 
-  const handleFileChange = (e) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      handleFileProcessing(files[0]);
+    let estimatedProfitMin = typeof summary.estimated_profit_min === 'number' ? summary.estimated_profit_min : null;
+    let estimatedProfitMax = typeof summary.estimated_profit_max === 'number' ? summary.estimated_profit_max : null;
+    if (
+      (estimatedProfitMin === null || estimatedProfitMax === null) &&
+      typeof calculation?.estimated_total_fees === 'number'
+    ) {
+      estimatedProfitMin = calculation.estimated_total_fees * 0.9;
+      estimatedProfitMax = calculation.estimated_total_fees * 1.1;
     }
-  };
 
-  const handleFileProcessing = (file) => {
-    setFileName(file.name);
-    setFileError('');
-    setParsedData(null);
-    
-    const fileExtension = file.name.split('.').pop()?.toLowerCase();
-    
-    if (fileExtension === 'csv') {
-      parseCSVFile(file);
-    } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
-      parseExcelFile(file);
-    } else {
-      setFileError('Unsupported file format. Please upload a CSV or Excel file.');
-      setFileName('');
+    const processingVolume =
+      typeof transactionSummary.monthly_volume === 'number' && transactionSummary.monthly_volume > 0
+        ? transactionSummary.monthly_volume
+        : typeof transactionSummary.total_volume === 'number'
+        ? transactionSummary.total_volume
+        : (typeof data?.calculation?.total_volume === 'number' ? data.calculation.total_volume : totalAmount);
+
+    const forecastHorizonVolume = volumeForecast.reduce((sum, point) => {
+      const mid = Number(point?.mid);
+      return Number.isFinite(mid) && mid > 0 ? sum + mid : sum;
+    }, 0);
+
+    const profitabilityDenominator = forecastHorizonVolume > 0 ? forecastHorizonVolume : processingVolume;
+
+    let profitabilityPct = null;
+    if (typeof summary?.profitability_pct === 'number') {
+      profitabilityPct = clampProfitabilityPct(summary.profitability_pct);
+    } else if (
+      typeof estimatedProfitMin === 'number' &&
+      typeof estimatedProfitMax === 'number' &&
+      typeof profitabilityDenominator === 'number' &&
+      profitabilityDenominator > 0
+    ) {
+      const midpointProfit = (estimatedProfitMin + estimatedProfitMax) / 2;
+      profitabilityPct = clampProfitabilityPct((midpointProfit / profitabilityDenominator) * 100);
     }
+
+    const averageTransactionSize =
+      typeof transactionSummary.average_ticket === 'number'
+        ? transactionSummary.average_ticket
+        : (typeof data?.calculation?.average_ticket === 'number' ? data.calculation.average_ticket : avgTicket);
+
+    const transactionCount =
+      typeof transactionSummary.transaction_count === 'number'
+        ? transactionSummary.transaction_count
+        : (typeof data?.calculation?.transaction_count === 'number' ? data.calculation.transaction_count : txCount);
+
+    return {
+      suggestedRate,
+      margin: marginBps,
+      estimatedProfit: estimatedProfitMin,
+      estimatedProfitMin,
+      estimatedProfitMax,
+      expectedATS: averageTransactionSize,
+      expectedVolume: processingVolume,
+      adoptionProbability: null,
+      profitability: profitabilityPct,
+      quotableRange: {
+        min: suggestedRate !== null ? Math.max(0, Number((suggestedRate - 0.1).toFixed(2))) : null,
+        max: suggestedRate !== null ? Number((suggestedRate + 0.1).toFixed(2)) : null,
+      },
+      processingVolume,
+      averageTransactionSize,
+      transactionCount,
+      currentRateProvided: !!formData.currentRate,
+      costForecast: Array.isArray(data?.cost_forecast) ? data.cost_forecast : [],
+      volumeForecast,
+      profitabilityCurve,
+      mlContext: data?.ml_context || null,
+      transactionSummary,
+      calculation,
+    };
   };
 
-  // Handler for Manual Data Entry
-  const handleManualDataConfirmed = (data) => {
-    if (!data || data.length === 0) return;
+  const computeTransactionMetrics = (input) => {
+    if (Array.isArray(input)) {
+      const txCount = input.length;
+      const totalAmount = input.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+      const avgTicket = txCount > 0 ? totalAmount / txCount : 0;
 
-    try {
-      // Aggregate statistics from manual entries
-      const totalTransactions = data.length;
-      const totalAmount = data.reduce((sum, row) => sum + (parseFloat(row.amount) || 0), 0);
-      const averageTicket = totalTransactions > 0 ? totalAmount / totalTransactions : 0;
-      
-      // Extract merchant ID from first row if available, otherwise generic
-      const merchantId = data[0].merchant_id || 'MANUAL_ENTRY';
+      let monthlyTxCount = txCount;
+      if (txCount >= 2) {
+        const firstDateStr = input[0]?.transaction_date || input[0]?.date;
+        const lastDateStr = input[txCount - 1]?.transaction_date || input[txCount - 1]?.date;
+        if (firstDateStr && lastDateStr) {
+          const d0 = new Date(firstDateStr);
+          const d1 = new Date(lastDateStr);
+          if (!isNaN(d0) && !isNaN(d1)) {
+            const spanMonths = Math.max(1, Math.abs(d1 - d0) / (30.44 * 24 * 60 * 60 * 1000));
+            monthlyTxCount = Math.round(txCount / spanMonths);
+          }
+        }
+      }
 
-      // Note: Manual entry does not capture MCC per row in the UI, 
-      // so user must select it manually in the dropdown.
-      
-      setParsedData({
-        merchantId,
-        mcc: null, // User must select this manually
-        totalTransactions,
-        totalAmount,
-        averageTicket,
-        transactions: data,
-        source: 'manual'
-      });
-      
-      setFileName('Manual Entry Data');
-      setValue('merchantId', merchantId, { shouldDirty: true });
-      setFileError('');
-    } catch (err) {
-      console.error(err);
-      setFileError('Error processing manual data');
+      const monthlyVolume = monthlyTxCount * avgTicket;
+      return { txCount: monthlyTxCount, totalAmount: monthlyVolume, avgTicket };
+    }
+
+    const txCount = Number(input?.totalTransactions || 0);
+    const totalAmount = Number(input?.totalAmount || 0);
+    const avgTicket = Number(input?.averageTicket || (txCount > 0 ? totalAmount / txCount : 0));
+    return { txCount, totalAmount, avgTicket };
+  };
+
+  const handleDataValidated = (data, mcc) => {
+    setTransactionData(data);
+    setDataValidated(true);
+    if (mcc) {
+      setValue('mcc', mcc);
     }
   };
 
   const onSubmit = async (data) => {
     setIsLoading(true);
     try {
-      const normalizedMerchantId = (data.merchantId || '').trim();
-      const avgTicket = Number(parsedData?.averageTicket || 0);
-      const totalTransactions = Number(parsedData?.totalTransactions || 0);
+      const { txCount, totalAmount, avgTicket } = computeTransactionMetrics(transactionData);
+
+      const hasCurrentRate = data.currentRate !== '' && data.currentRate !== undefined;
 
       const payload = {
-        // Keep request compact to avoid nginx 413 for very large manual/file datasets.
-        transactions: [],
         mcc: data.mcc,
         average_transaction_value: avgTicket,
-        monthly_transactions: totalTransactions,
-        desired_margin: data.desiredMargin ? parseFloat(data.desiredMargin) / 10000 : 0.015,
-        fixed_fee: data.fixedFee ? parseFloat(data.fixedFee) : 0.30,
+        monthly_transactions: txCount,
+        fixedFee: data.fixedFee === '' || data.fixedFee === undefined ? null : parseFloat(data.fixedFee),
+        currentRate: data.currentRate === '' || data.currentRate === undefined ? null : parseFloat(data.currentRate),
+        transactions: [],
       };
-      if (normalizedMerchantId) {
-        payload.merchant_id = normalizedMerchantId;
+
+      payload.fixed_fee = payload.fixedFee ?? 0.30;
+      payload.current_rate = payload.currentRate !== null && payload.currentRate !== undefined
+        ? payload.currentRate / 100
+        : null;
+      delete payload.fixedFee;
+      delete payload.currentRate;
+
+      const desiredMarginValue = data.desiredMargin
+        ? parseFloat(data.desiredMargin) / 10000
+        : 0.015;
+
+      const quotePayload = {
+        mcc: data.mcc,
+        average_transaction_value: avgTicket,
+        monthly_transactions: txCount,
+        fixed_fee:
+          data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
+            ? 0.0
+            : payload.fixed_fee,
+        desired_margin: desiredMarginValue,
+        transactions: [],
+      };
+
+      if (hasCurrentRate) {
+        quotePayload.current_rate = payload.current_rate;
       }
 
-      // Call dedicated aggregator API to retrieve summary and detailed ML outputs in one response.
-      const apiResults = await desiredMarginAPI.getDesiredMarginDetails(payload);
-
-      setResults(normalizeDesiredMarginResults(apiResults, parsedData));
-      setShowResults(true);
+      const apiResults = await desiredMarginAPI.getDesiredMarginDetails(quotePayload);
+      setResults(normalizeRangeResults(apiResults, data, txCount, avgTicket, totalAmount));
     } catch (error) {
       console.error('Calculation error:', error);
-      
-      // Fallback to null values when backend is not available
-      const fallbackResults = {
+      const { txCount, totalAmount, avgTicket } = computeTransactionMetrics(transactionData);
+
+      if (!(data.currentRate !== '' && data.currentRate !== undefined)) {
+        try {
+          const fixedFeeFallback =
+            data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
+              ? 0.0
+              : parseFloat(data.fixedFee);
+
+          const fallbackPayload = {
+            mcc: data.mcc,
+            average_transaction_value: avgTicket,
+            monthly_transactions: txCount,
+            fixed_fee: Number.isFinite(fixedFeeFallback) ? fixedFeeFallback : 0.0,
+            current_rate: null,
+            transactions: [],
+          };
+
+          const fallbackApiResults = await merchantFeeAPI.calculateCurrentRates(fallbackPayload);
+          setResults(normalizeCurrentRateResults(fallbackApiResults, data, txCount, avgTicket, totalAmount));
+          return;
+        } catch (fallbackError) {
+          console.error('Fallback current-rate calculation error:', fallbackError);
+        }
+      }
+
+      const mockResults = {
         suggestedRate: null,
-        marginBps: null,
-        estimatedProfitMin: null,
-        estimatedProfitMax: null,
-        transactionSummary: null,
-        costForecast: [],
-        volumeForecast: [],
-        profitabilityCurve: [],
-        mlContext: null,
-        calculation: null,
-        parsedData,
+        margin: null,
+        estimatedProfit: null,
+        expectedATS: null,
+        expectedVolume: null,
+        quotableRange: { min: null, max: null },
+        adoptionProbability: null,
+        profitability: null,
+        processingVolume: totalAmount,
+        averageTransactionSize: avgTicket,
+        transactionCount: txCount,
+        currentRateProvided: !!data.currentRate,
       };
-      
-      setResults(fallbackResults);
-      setShowResults(true);
+      setResults(mockResults);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const parseCSVFile = (file) => {
-    const reader = new FileReader();
-    
-    reader.onload = (e) => {
-      try {
-        const text = e.target?.result;
-        const lines = text.split('\n').filter(line => line.trim());
-        
-        if (lines.length < 2) {
-          setFileError('File must contain at least a header row and one data row');
-          return;
-        }
-        
-        // Validate headers
-        const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
-        const requiredHeaders = ['transaction_date', 'merchant_id', 'mcc', 'amount'];
-        const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
-        
-        if (missingHeaders.length > 0) {
-          setFileError(`Missing required columns: ${missingHeaders.join(', ')}`);
-          return;
-        }
-        
-        const dataRows = lines.slice(1).map((line, idx) => {
-          const values = line.split(',').map(v => v.trim());
-          const row = {
-            date: values[headers.indexOf('transaction_date')],
-            merchantId: values[headers.indexOf('merchant_id')],
-            mcc: values[headers.indexOf('mcc')],
-            amount: parseFloat(values[headers.indexOf('amount')]) || 0
-          };
-          
-          if (!row.date || !row.merchantId || !row.mcc || !row.amount) {
-            throw new Error(`Invalid data at row ${idx + 2}: Missing required fields`);
-          }
-          
-          if (isNaN(row.amount) || row.amount <= 0) {
-            throw new Error(`Invalid data at row ${idx + 2}: Amount must be a positive number`);
-          }
-          
-          return row;
-        });
-        
-        if (dataRows.length === 0) {
-          setFileError('No valid transaction data found in file');
-          return;
-        }
-        
-        const mcc = dataRows[0].mcc;
-        const merchantId = dataRows[0].merchantId;
-        
-        const totalTransactions = dataRows.length;
-        const totalAmount = dataRows.reduce((sum, row) => sum + row.amount, 0);
-        const averageTicket = totalAmount / totalTransactions;
-        
-        setValue('mcc', mcc, { shouldValidate: true, shouldDirty: true });
-        setValue('merchantId', merchantId, { shouldDirty: true });
-        setFileError('');
-        
-        setParsedData({
-          merchantId,
-          mcc,
-          totalTransactions,
-          totalAmount,
-          averageTicket,
-          transactions: dataRows,
-          source: 'file'
-        });
-      } catch (error) {
-        setFileError(error.message || 'Error parsing CSV file');
-        setParsedData(null);
-      }
-    };
-    
-    reader.readAsText(file);
-  };
-
-  const parseExcelFile = (file) => {
-    const reader = new FileReader();
-    
-    reader.onload = (e) => {
-      try {
-        const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: 'binary' });
-        
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
-        
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        
-        if (jsonData.length < 2) {
-          setFileError('File must contain at least a header row and one data row');
-          return;
-        }
-        
-        const headers = jsonData[0].map(h => String(h).toLowerCase().trim());
-        const requiredHeaders = ['transaction_date', 'merchant_id', 'mcc', 'amount'];
-        const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
-        
-        if (missingHeaders.length > 0) {
-          setFileError(`Missing required columns: ${missingHeaders.join(', ')}`);
-          return;
-        }
-        
-        const dataRows = jsonData.slice(1).map((row, idx) => {
-          const rowData = {
-            date: row[headers.indexOf('transaction_date')],
-            merchantId: row[headers.indexOf('merchant_id')],
-            mcc: String(row[headers.indexOf('mcc')]),
-            amount: parseFloat(row[headers.indexOf('amount')]) || 0
-          };
-          
-          if (!rowData.date || !rowData.merchantId || !rowData.mcc || !rowData.amount) {
-            throw new Error(`Invalid data at row ${idx + 2}: Missing required fields`);
-          }
-          
-          if (isNaN(rowData.amount) || rowData.amount <= 0) {
-            throw new Error(`Invalid data at row ${idx + 2}: Amount must be a positive number`);
-          }
-          
-          return rowData;
-        });
-        
-        if (dataRows.length === 0) {
-          setFileError('No valid transaction data found in file');
-          return;
-        }
-        
-        const mcc = dataRows[0].mcc;
-        const merchantId = dataRows[0].merchantId;
-        
-        const totalTransactions = dataRows.length;
-        const totalAmount = dataRows.reduce((sum, row) => sum + row.amount, 0);
-        const averageTicket = totalAmount / totalTransactions;
-        
-        setValue('mcc', mcc, { shouldValidate: true, shouldDirty: true });
-        setValue('merchantId', merchantId, { shouldDirty: true });
-        setFileError('');
-        
-        setParsedData({
-          merchantId,
-          mcc,
-          totalTransactions,
-          totalAmount,
-          averageTicket,
-          transactions: dataRows,
-          source: 'file'
-        });
-      } catch (error) {
-        setFileError(error.message || 'Error parsing Excel file');
-        setParsedData(null);
-      }
-    };
-    
-    reader.readAsBinaryString(file);
-  };
-
-  const handleTabChange = (value) => {
-    setActiveTab(value);
-    // Reset data when switching tabs to avoid confusion
-    setParsedData(null);
-    setFileName('');
-    setFileError('');
-    if (value === 'manual') {
-      setValue('mcc', ''); // Clear MCC if switching to manual since it requires selection
-    }
-  };
-
   const handleNewCalculation = () => {
     setResults(null);
-    setFileName('');
-    setParsedData(null);
+    setDataValidated(false);
+    setTransactionData([]);
     reset();
-    setShowResults(false);
-    setActiveTab('upload');
   };
 
-  // If results exist, show full-screen results panel
-  if (showResults) {
-    return <DesiredMarginResults results={results} onNewCalculation={handleNewCalculation} />;
+  if (results) {
+    return <ResultsPanel results={results} hasCurrentRate={!!currentRate} onNewCalculation={handleNewCalculation} />;
   }
 
   return (
@@ -415,24 +379,24 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
 
         {/* Split Layout Container */}
         <div className="bg-white rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-5">
-          {/* Left Panel */}
+          {/* Left Panel - Green Branding */}
           <div className="lg:col-span-2 bg-gradient-to-br from-[#22C55E] to-[#16A34A] p-12 flex flex-col justify-between relative overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
             <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2"></div>
-            
+
             <div className="relative z-10">
               <h1 className="text-4xl font-bold text-white mb-4">
                 Rates Quotation Tool
               </h1>
               <p className="text-green-50 text-lg leading-relaxed">
-                Receive data-driven pricing recommendations to maximise your revenue while staying competitive.
+                Receive data-driven pricing recommendations to maximise your revenue while staying competitive. Upload your data or enter it manually to get started.
               </p>
             </div>
 
             <div className="relative z-10 mt-8">
               <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/20">
                 <div className="flex items-center justify-center h-48">
-                    <TrendingUp className="w-24 h-24 text-white/70" />
+                  <TrendingUp className="w-24 h-24 text-white/70" />
                 </div>
               </div>
             </div>
@@ -440,200 +404,178 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
 
           {/* Right Panel - Form */}
           <div className="lg:col-span-3 p-12">
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
-              
-              {/* Merchant Transaction Data Section */}
-              <div>
-                <h2 className="text-2xl font-bold text-[#313131] mb-6">
-                  Merchant Transaction Data
-                </h2>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+              {/* Step 1: Data Input */}
+              {!dataValidated && (
+                <div className="space-y-4">
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-800 mb-1">
+                      Step 1: Transaction Data
+                    </h2>
+                    <p className="text-sm text-gray-600">
+                      Upload a CSV file or enter transactions manually
+                    </p>
+                  </div>
 
-                <Tabs value={activeTab} onValueChange={handleTabChange}>
-                  <TabsList className="mb-4">
-                    <TabsTrigger value="upload">Upload CSV/Excel</TabsTrigger>
-                    <TabsTrigger value="manual">Manual Entry</TabsTrigger>
-                  </TabsList>
+                  <Tabs value={activeTab} onValueChange={setActiveTab}>
+                    <TabsList>
+                      <TabsTrigger value="upload">Upload CSV</TabsTrigger>
+                      <TabsTrigger value="manual">Manual Entry</TabsTrigger>
+                    </TabsList>
 
-                  <TabsContent value="upload">
-                    <div 
-                      className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-                        fileError ? 'border-red-300 bg-red-50' : 
-                        dragActive ? 'border-[#22C55E] bg-green-50' : 
-                        'border-gray-300 bg-gray-50 hover:border-[#22C55E]'
-                      }`}
-                      onDragEnter={handleDrag}
-                      onDragLeave={handleDrag}
-                      onDragOver={handleDrag}
-                      onDrop={handleDrop}
-                    >
-                      <input
-                        type="file"
-                        id="file-upload"
-                        className="hidden"
-                        accept=".csv,.xlsx,.xls"
-                        onChange={handleFileChange}
+                    <TabsContent value="upload">
+                      <DataUploadValidator
+                        onValidDataConfirmed={handleDataValidated}
+                        onMCCExtracted={(mcc) => setValue('mcc', mcc)}
                       />
-                      
-                      {fileError ? (
-                        <div className="flex flex-col items-center gap-3">
-                          <AlertCircle className="w-12 h-12 text-red-500" />
-                          <div>
-                            <p className="text-sm font-medium text-red-900">{fileName}</p>
-                            <p className="text-sm text-red-600 mt-1">{fileError}</p>
-                          </div>
-                          <label htmlFor="file-upload" className="cursor-pointer">
-                            <span className="text-[#22C55E] hover:text-[#16A34A] font-medium text-sm">Try another file</span>
-                          </label>
-                        </div>
-                      ) : fileName && parsedData && parsedData.source === 'file' ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <FileCheck className="w-12 h-12 text-green-500" />
-                          <p className="text-sm font-medium text-gray-900">{fileName}</p>
-                          <p className="text-sm text-green-600">
-                            {parsedData.totalTransactions} transactions parsed
-                          </p>
-                        </div>
-                      ) : (
-                        <>
-                          <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                          <label htmlFor="file-upload" className="cursor-pointer block">
-                            <span className="text-[#22C55E] hover:text-[#16A34A] font-medium">Upload CSV or Excel file</span>
-                          </label>
-                        </>
-                      )}
-                    </div>
-                    
-                    <div className="mt-4">
-                      <Button
-                        type="button"
-                        onClick={handleDownloadTemplate}
-                        className="w-full bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium py-2"
-                      >
-                        <Download className="w-4 h-4 mr-2" />
-                        Download CSV Template
-                      </Button>
-                    </div>
-                  </TabsContent>
+                    </TabsContent>
 
-                  <TabsContent value="manual">
-                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-                       <ManualTransactionEntry 
-                        onValidDataConfirmed={handleManualDataConfirmed}
-                        showProceedButton={false}
-                        autoConfirm={true}
-                       />
-                       {parsedData && parsedData.source === 'manual' && (
-                         <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
-                            <FileCheck className="w-5 h-5 text-green-600" />
-                            <span className="text-sm text-green-800 font-medium">
-                               Manual data confirmed: {parsedData.totalTransactions} transactions
-                            </span>
-                         </div>
-                       )}
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </div>
-
-              {/* MCC Code */}
-              <div>
-                <Label htmlFor="merchantId" className="text-lg font-semibold text-gray-900 mb-2">
-                  Merchant ID <span className="text-gray-500 font-normal">(Optional)</span>
-                </Label>
-                <Input
-                  id="merchantId"
-                  type="text"
-                  placeholder="Enter merchant ID"
-                  className="mt-2"
-                  {...register('merchantId')}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="mcc" className="text-lg font-semibold text-gray-900 mb-2">
-                  Merchant Category Code (MCC)
-                </Label>
-                <MCCDropdown
-                  value={mcc || ''}
-                  onChange={(value) => setValue('mcc', value, { shouldValidate: true, shouldDirty: true })}
-                  error={errors.mcc}
-                />
-                <input
-                  type="hidden"
-                  {...register('mcc', { required: 'MCC is required' })}
-                />
-                {errors.mcc && <p className="mt-1 text-sm text-red-600">{errors.mcc.message}</p>}
-              </div>
-
-              {/* Preferred Fee Structure */}
-              <div>
-                <Label htmlFor="feeStructure" className="text-lg font-semibold text-gray-900 mb-2">
-                  Preferred Fee Structure
-                </Label>
-                <select
-                  id="feeStructure"
-                  {...register('feeStructure', {
-                    required: 'Fee structure is required'
-                  })}
-                  className="mt-2 w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#22C55E] focus:border-[#22C55E] bg-white text-gray-700"
-                >
-                  <option value="">Select structure</option>
-                  <option value="percentage">% (Percentage only)</option>
-                  <option value="percentage-fixed">% + Fixed Fee</option>
-                  <option value="fixed">Fixed Fee</option>
-                </select>
-                {errors.feeStructure && <p className="mt-1 text-sm text-red-600">{errors.feeStructure.message}</p>}
-              </div>
-
-              {/* Fixed Fee - Show when percentage-fixed is selected */}
-              {feeStructure === 'percentage-fixed' && (
-                <div>
-                  <Label htmlFor="fixedFee" className="text-lg font-semibold text-gray-900 mb-2">
-                    Fixed Fee <span className="text-gray-500 font-normal">(Optional)</span>
-                  </Label>
-                  <Input
-                    id="fixedFee"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    {...register('fixedFee', {
-                      min: { value: 0, message: 'Fixed fee cannot be negative' }
-                    })}
-                    placeholder="Enter fixed fee ($)"
-                    className="mt-2"
-                  />
-                  {errors.fixedFee && <p className="mt-1 text-sm text-red-600">{errors.fixedFee.message}</p>}
+                    <TabsContent value="manual">
+                      <ManualTransactionEntry
+                        onValidDataConfirmed={(data) => handleDataValidated(data)}
+                      />
+                    </TabsContent>
+                  </Tabs>
                 </div>
               )}
 
-              {/* Desired Margin */}
-              <div>
-                <Label htmlFor="desiredMargin" className="text-lg font-semibold text-gray-900 mb-2">
-                  Desired Margin <span className="text-gray-500 font-normal">(Optional)</span>
-                </Label>
-                <Input
-                  id="desiredMargin"
-                  type="number"
-                  step="1"
-                  min="0"
-                  {...register('desiredMargin', {
-                    min: { value: 0, message: 'Desired margin cannot be negative' },
-                    validate: (value) => !value || parseFloat(value) >= 0 || 'Desired margin must be a positive number'
-                  })}
-                  placeholder="Enter desired margin (bps)"
-                  className="mt-2"
-                />
-                {errors.desiredMargin && <p className="mt-1 text-sm text-red-600">{errors.desiredMargin.message}</p>}
-              </div>
+              {/* Step 2: Fee Configuration */}
+              {dataValidated && (
+                <>
+                  <div className="pb-4 border-b border-gray-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-xl font-semibold text-gray-900 mb-1">
+                          Step 2: Fee Configuration
+                        </h2>
+                        <p className="text-sm text-gray-600">
+                          {transactionData.length} transaction(s) validated
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDataValidated(false)}
+                        className="text-sm text-[#22C55E] hover:text-[#16A34A] font-medium"
+                      >
+                        Edit Data
+                      </button>
+                    </div>
+                  </div>
 
-              {/* Submit Button */}
-              <Button
-                type="submit"
-                disabled={isLoading || !parsedData || !mcc || !feeStructure}
-                className="w-full bg-[#22C55E] hover:bg-[#16A34A] text-white font-semibold py-4 text-lg rounded-xl disabled:bg-gray-300 disabled:cursor-not-allowed"
-              >
-                {isLoading ? 'Calculating...' : 'Calculate Results'}
-              </Button>
+                  {/* Merchant Category Code */}
+                  <div>
+                    <Label htmlFor="mcc">Merchant Category Code (MCC)</Label>
+                    <MCCDropdown
+                      value={mccValue}
+                      onChange={(value) => setValue('mcc', value)}
+                      error={errors.mcc?.message}
+                    />
+                    <input
+                      type="hidden"
+                      {...register('mcc', { required: 'MCC is required' })}
+                    />
+                  </div>
+
+                  {/* Preferred Fee Structure */}
+                  <div>
+                    <Label htmlFor="feeStructure">Preferred Fee Structure</Label>
+                    <select
+                      id="feeStructure"
+                      {...register('feeStructure', { required: 'Please select a fee structure' })}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#22C55E] focus:border-[#22C55E] bg-white"
+                    >
+                      <option value="">Select structure</option>
+                      <option value="percentage">% (Percentage only)</option>
+                      <option value="percentage-fixed">% + Fixed Fee</option>
+                      <option value="fixed">Fixed Fee</option>
+                    </select>
+                    {errors.feeStructure && (
+                      <p className="mt-1 text-sm text-red-600">{errors.feeStructure.message}</p>
+                    )}
+                  </div>
+
+                  {/* Fixed Fee - Conditional */}
+                  {feeStructure === 'percentage-fixed' && (
+                    <div>
+                      <Label htmlFor="fixedFee">Fixed Fee <span className="text-gray-500 font-normal">(Optional)</span></Label>
+                      <div className="relative">
+                        <Input
+                          id="fixedFee"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          {...register('fixedFee', {
+                            min: { value: 0, message: 'Fixed fee cannot be negative' }
+                          })}
+                          placeholder="Enter fixed fee"
+                          className={fixedFee ? 'pl-8' : ''}
+                        />
+                        {fixedFee && (
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                        )}
+                      </div>
+                      {errors.fixedFee && (
+                        <p className="mt-1 text-sm text-red-600">{errors.fixedFee.message}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Desired Margin */}
+                  <div>
+                    <Label htmlFor="desiredMargin">Desired Margin <span className="text-gray-500 font-normal">(Optional, bps)</span></Label>
+                    <Input
+                      id="desiredMargin"
+                      type="number"
+                      step="1"
+                      min="0"
+                      {...register('desiredMargin', {
+                        min: { value: 0, message: 'Desired margin cannot be negative' },
+                        validate: (value) => !value || parseFloat(value) >= 0 || 'Desired margin must be a positive number'
+                      })}
+                      placeholder="Enter desired margin (bps)"
+                    />
+                    {errors.desiredMargin && (
+                      <p className="mt-1 text-sm text-red-600">{errors.desiredMargin.message}</p>
+                    )}
+                  </div>
+
+                  {/* Current Rate */}
+                  <div>
+                    <Label htmlFor="currentRate">Current Rate <span className="text-gray-500 font-normal">(Optional)</span></Label>
+                    <div className="relative">
+                      <Input
+                        id="currentRate"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        {...register('currentRate', {
+                          min: { value: 0, message: 'Rate cannot be negative' },
+                          max: { value: 100, message: 'Rate cannot exceed 100%' },
+                          validate: (value) => !value || (parseFloat(value) >= 0 && parseFloat(value) <= 100) || 'Rate must be between 0 and 100'
+                        })}
+                        placeholder="Enter current rate"
+                        className={currentRate ? 'pr-8' : ''}
+                      />
+                      {currentRate && (
+                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">%</span>
+                      )}
+                    </div>
+                    {errors.currentRate && (
+                      <p className="mt-1 text-sm text-red-600">{errors.currentRate.message}</p>
+                    )}
+                  </div>
+
+                  {/* Submit Button */}
+                  <Button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full"
+                  >
+                    {isLoading ? 'Calculating...' : 'Proceed to Projection'}
+                  </Button>
+                </>
+              )}
             </form>
           </div>
         </div>

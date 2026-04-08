@@ -639,10 +639,17 @@ def get_tpv_forecast(req: TPVForecastRequest) -> TPVForecastResponse:
         logger.warning("[TPV] No repository configured — using extrapolation fallback")
         return _fallback_forecast(context_months, req)
 
-    flat_pool_mean, knn_pool_mean, peer_ids = _compute_pool_info(
-        repo=_REPO, mcc=req.mcc, card_types=req.card_types,
-        context_months=context_months,
-    )
+    try:
+        flat_pool_mean, knn_pool_mean, peer_ids = _compute_pool_info(
+            repo=_REPO, mcc=req.mcc, card_types=req.card_types,
+            context_months=context_months,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[TPV] Pool info lookup failed (DB schema mismatch?) — "
+            "using extrapolation fallback: %s", exc,
+        )
+        return _fallback_forecast(context_months, req)
 
     # 5. Build features (log-space)
     log_vals = [np.log1p(m.total_processing_value) for m in context_months]

@@ -89,7 +89,7 @@
       - ./ml_service:/app
       - "./KNN Demo Service/KNN Demo Service:/data/knn_source:ro"
       - "./ml_pipeline/Matt_EDA/services/GetAvgProcCostForecast Service v2/artifacts:/app/artifacts/m9:ro"
-      - "./ml_pipeline/Matt_EDA/services/GetTPVForecast Service v2/artifacts:/app/artifacts/tpv:ro"
+      - "./ml_service/artifacts/tpv:/app/artifacts/tpv:ro"
     depends_on:
       - postgres
     restart: unless-stopped
