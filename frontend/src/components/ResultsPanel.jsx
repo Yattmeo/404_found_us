@@ -14,11 +14,9 @@ const formatCurrency = (value) => {
   return num < 0 ? `-$${abs}` : `$${abs}`;
 };
 
-const buildSmoothPath = (coords, yMin = -Infinity, yMax = Infinity) => {
+const buildSmoothPath = (coords) => {
   if (coords.length === 0) return '';
   if (coords.length === 1) return `M ${coords[0].x} ${coords[0].y}`;
-
-  const clampY = (y) => Math.min(yMax, Math.max(yMin, y));
 
   let path = `M ${coords[0].x} ${coords[0].y}`;
   for (let i = 0; i < coords.length - 1; i += 1) {
@@ -28,9 +26,9 @@ const buildSmoothPath = (coords, yMin = -Infinity, yMax = Infinity) => {
     const p3 = coords[i + 2] || p2;
 
     const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = clampY(p1.y + (p2.y - p0.y) / 6);
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
     const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = clampY(p2.y - (p3.y - p1.y) / 6);
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
     path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
   }
   return path;
@@ -39,24 +37,11 @@ const buildSmoothPath = (coords, yMin = -Infinity, yMax = Infinity) => {
 
 
 const buildFallbackCostSeries = (baseRatePct) => {
-  const now = new Date();
-  const monthlyLabels = [];
-  for (let i = 0; i < 3; i += 1) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    monthlyLabels.push(d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }));
-  }
-
   const base = Math.max(1.2, Math.min(3.8, Number(baseRatePct || 2.2) - 0.55));
   const deltas = [0.02, -0.01, 0.03];
-
-  return monthlyLabels.map((label, idx) => {
+  return [1, 2, 3].map((month, idx) => {
     const mid = base + deltas[idx];
-    return {
-      label,
-      mid,
-      lower: mid - 0.08,
-      upper: mid + 0.08,
-    };
+    return { label: `Month ${month}`, mid, lower: mid - 0.08, upper: mid + 0.08 };
   });
 };
 
@@ -245,7 +230,7 @@ const ProbabilityMiniChart = ({
     return ticks;
   })();
 
-  const path = buildSmoothPath(coords, top, top + usableH);
+  const path = buildSmoothPath(coords);
 
   const markerCoord = (() => {
     if (!Number.isFinite(markerX)) return null;
@@ -341,12 +326,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
     results?.estimatedProfitMin !== null && results?.estimatedProfitMin !== undefined &&
     results?.estimatedProfitMax !== null && results?.estimatedProfitMax !== undefined;
 
-  const getAmountClass = (value) => {
-    const n = Number(value);
-    if (n < 0) return 'text-red-600';
-    if (n === 0) return 'text-gray-400';
-    return 'text-[#17a455]';
-  };
+  const getAmountClass = (value) => (Number(value) < 0 ? 'text-red-600' : 'text-[#17a455]');
 
   const getOrderedProfitRange = () => {
     if (!hasEstimatedProfitRange) {
@@ -406,7 +386,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
             <div className="bg-blue-50 rounded-2xl p-6 border border-blue-100 shadow-sm">
               <div className="space-y-3">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Probability of Profitability:</p>
+                  <p className="text-sm font-medium text-gray-700">% of profitability:</p>
                   <p className="text-2xl font-bold text-gray-900">
                     {results.profitability !== null && results.profitability !== undefined 
                       ? `${results.profitability}%` 
@@ -469,7 +449,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                   series={
                     Array.isArray(results.costForecast) && results.costForecast.length > 0
                       ? results.costForecast.map((p) => ({
-                          label: p.label || `W${p.week_index || ''}`,
+                          label: p.label || `Month ${p.month_index || ''}`,
                           mid: Number(p.mid || 0) * 100,
                           lower: Number(p.lower || 0) * 100,
                           upper: Number(p.upper || 0) * 100,

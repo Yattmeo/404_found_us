@@ -1,16 +1,15 @@
 """
-TPV (Total Payment Volume) forecast service — Huber in-process inference.
+GetTPVForecast — v2 inference service (embedded in ml_service).
 
-Mirrors m9_forecast/service.py but targets monthly TPV (dollars) trained in
-log1p-space.  Conformal intervals are calibrated in dollar space then scaled
-proportionally so they remain meaningful across merchant sizes:
-    hw = max(global_q90_dollars, 0.10 × mid)
-
-11 prediction features and 11 risk features — must match train.py exactly.
+Adapted from the standalone GetTPVForecast Service v2.
+All imports use relative paths. Graceful degraded mode when artifacts
+are not yet trained (returns a simple extrapolation-based fallback).
 """
+
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import threading
@@ -19,56 +18,71 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import HuberRegressor
+from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
+from .config import (
+    ARTIFACT_POLL_INTERVAL_S,
+    ARTIFACTS_BASE_PATH,
+    HORIZON_LEN,
+    KNN_K,
+    LOG_TARGET,
+    MIN_POOL,
+    SUPPORTED_CONTEXT_LENS,
+    SUPPORTED_MCCS,
+    TARGET_COV,
+    _VOL_EPS,
+)
 from .models import (
-    TpvConformalMetadata,
-    TpvContextMonth,
-    TpvForecastMonth,
-    TpvForecastRequest,
-    TpvForecastResponse,
-    TpvProcessMetadata,
+    ConformalMetadata,
+    ForecastMonth,
+    ProcessMetadata,
+    TPVForecastRequest,
+    TPVForecastResponse,
 )
+from .repository import MerchantRepository
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants (must match train.py config)
+# Internal monthly summary
 # ---------------------------------------------------------------------------
-SUPPORTED_CONTEXT_LENS = [1, 3, 6]
-SUPPORTED_MCCS = [5411]
-HORIZON_LEN = 3
-TARGET_COV = 0.90
-MIN_POOL = 10
-_EPS = 1e-9
 
-ARTIFACTS_BASE_PATH = Path(
-    os.getenv(
-        "TPV_ARTIFACTS_BASE_PATH",
-        str(Path(__file__).resolve().parent.parent.parent / "artifacts" / "tpv"),
-    )
-)
-ARTIFACT_POLL_INTERVAL_S = float(os.getenv("ARTIFACT_POLL_INTERVAL_S", "60"))
-
-# Minimum relative CI width — ensures sigma_tpv is meaningful in MC simulation
-_MIN_CI_RELATIVE = 0.10
+@dataclass
+class _MonthSummary:
+    year: int
+    month: int
+    total_processing_value: float
+    transaction_count: int
+    avg_transaction_value: float
+    std_txn_amount: float
+    median_txn_amount: float
+    cost_type_pcts: Optional[Dict[str, float]] = None
 
 
 # ---------------------------------------------------------------------------
 # Artifact bundle
 # ---------------------------------------------------------------------------
+
 @dataclass
-class TpvArtifactBundle:
+class ArtifactBundle:
     context_len: int
-    models: list           # List[HuberRegressor], one per horizon month
+    models: List[HuberRegressor]
     scaler: StandardScaler
-    cal_residuals: dict    # merchant_id -> List[float] of dollar-space residuals
-    global_q90_dollars: float
-    risk_models: list      # List[GradientBoostingRegressor]
+    cal_residuals: Dict[int, List[float]]
+    global_q90: float
+    risk_models: List[GradientBoostingRegressor]
+    strat_enabled: bool
+    strat_scheme: Optional[str]
+    strat_knot_x: Optional[np.ndarray]
+    strat_q_vals: Optional[np.ndarray]
     config_snapshot: dict
     loaded_mtime: float = field(default=0.0)
 
@@ -78,360 +92,621 @@ class TpvArtifactBundle:
 
 
 # ---------------------------------------------------------------------------
-# Cache
+# Artifact loading
 # ---------------------------------------------------------------------------
-_ARTIFACT_CACHE: Dict[Tuple[int, int], TpvArtifactBundle] = {}
-_CACHE_LOCK = threading.Lock()
-
 
 def _artifact_dir(mcc: int, ctx_len: int) -> Path:
     return ARTIFACTS_BASE_PATH / str(mcc) / str(ctx_len)
 
 
-def _load_bundle(mcc: int, ctx_len: int) -> TpvArtifactBundle:
+def _load_bundle(mcc: int, ctx_len: int) -> ArtifactBundle:
     d = _artifact_dir(mcc, ctx_len)
-    with open(d / "config_snapshot.json") as fh:
-        snapshot = json.load(fh)
+    snapshot_path = d / "config_snapshot.json"
 
-    models = joblib.load(d / "models.pkl")
-    scaler = joblib.load(d / "scaler.pkl")
-    cal_residuals = joblib.load(d / "cal_residuals.pkl")
-    global_q90_dollars = float(joblib.load(d / "global_q90.pkl"))
-    risk_models = joblib.load(d / "risk_models.pkl")
+    with open(snapshot_path) as f:
+        snapshot = json.load(f)
 
-    return TpvArtifactBundle(
+    models: List[HuberRegressor] = joblib.load(d / "models.pkl")
+    scaler: StandardScaler = joblib.load(d / "scaler.pkl")
+    cal_residuals: Dict[int, List[float]] = joblib.load(d / "cal_residuals.pkl")
+    global_q90: float = joblib.load(d / "global_q90.pkl")
+    risk_models: List[GradientBoostingRegressor] = joblib.load(d / "risk_models.pkl")
+
+    strat_enabled = snapshot.get("strat_enabled", False)
+    strat_scheme = snapshot.get("strat_scheme")
+    strat_knot_x = None
+    strat_q_vals = None
+    if strat_enabled:
+        strat_knot_x = joblib.load(d / "strat_knot_x.pkl")
+        strat_q_vals = joblib.load(d / "strat_q_vals.pkl")
+
+    mtime = os.path.getmtime(snapshot_path)
+    return ArtifactBundle(
         context_len=ctx_len,
         models=models,
         scaler=scaler,
         cal_residuals=cal_residuals,
-        global_q90_dollars=global_q90_dollars,
+        global_q90=global_q90,
         risk_models=risk_models,
+        strat_enabled=strat_enabled,
+        strat_scheme=strat_scheme,
+        strat_knot_x=strat_knot_x,
+        strat_q_vals=strat_q_vals,
         config_snapshot=snapshot,
-        loaded_mtime=os.path.getmtime(d / "config_snapshot.json"),
+        loaded_mtime=mtime,
     )
 
 
-def init_tpv_cache() -> None:
-    """Load artifacts for all MCC × context_len at startup."""
+# ---------------------------------------------------------------------------
+# Artifact cache with hot-reload
+# ---------------------------------------------------------------------------
+
+_ARTIFACT_CACHE: Dict[Tuple[int, int], ArtifactBundle] = {}
+_CACHE_LOCK = threading.Lock()
+_REPO: Optional[MerchantRepository] = None
+
+
+def set_repository(repo: MerchantRepository) -> None:
+    global _REPO
+    _REPO = repo
+
+
+def _init_cache() -> None:
     for mcc in SUPPORTED_MCCS:
         for ctx_len in SUPPORTED_CONTEXT_LENS:
             d = _artifact_dir(mcc, ctx_len)
             if not (d / "config_snapshot.json").exists():
-                print(f"[tpv_forecast] No artifacts for MCC {mcc} ctx={ctx_len} at {d}")
+                logger.warning(
+                    "[TPV] No artifacts for MCC %d ctx=%d at %s — skipping",
+                    mcc, ctx_len, d,
+                )
                 continue
             try:
                 bundle = _load_bundle(mcc, ctx_len)
                 with _CACHE_LOCK:
                     _ARTIFACT_CACHE[(mcc, ctx_len)] = bundle
-                print(
-                    f"[tpv_forecast] Loaded MCC {mcc} ctx={ctx_len} "
-                    f"trained_at={bundle.trained_at} "
-                    f"global_q90=${bundle.global_q90_dollars:.2f}"
+                logger.info(
+                    "[TPV] Loaded artifacts for MCC %d ctx=%d trained_at=%s strat=%s",
+                    mcc, ctx_len, bundle.trained_at, bundle.strat_enabled,
                 )
             except Exception as exc:
-                print(f"[tpv_forecast] Failed to load MCC {mcc} ctx={ctx_len}: {exc}")
+                logger.warning(
+                    "[TPV] Failed to load artifacts for MCC %d ctx=%d: %s",
+                    mcc, ctx_len, exc,
+                )
 
 
 def _poll_artifacts() -> None:
     while True:
         time.sleep(ARTIFACT_POLL_INTERVAL_S)
-        for key in list(_ARTIFACT_CACHE.keys()):
-            mcc, ctx_len = key
+        for (mcc, ctx_len) in list(_ARTIFACT_CACHE.keys()):
             try:
-                sp = _artifact_dir(mcc, ctx_len) / "config_snapshot.json"
-                mt = os.path.getmtime(sp)
+                snapshot_path = _artifact_dir(mcc, ctx_len) / "config_snapshot.json"
+                current_mtime = os.path.getmtime(snapshot_path)
                 with _CACHE_LOCK:
-                    old = _ARTIFACT_CACHE[key].loaded_mtime
-                if mt > old:
+                    old_mtime = _ARTIFACT_CACHE[(mcc, ctx_len)].loaded_mtime
+                if current_mtime > old_mtime:
                     bundle = _load_bundle(mcc, ctx_len)
                     with _CACHE_LOCK:
-                        _ARTIFACT_CACHE[key] = bundle
-                    print(f"[tpv_forecast] Hot-reloaded MCC {mcc} ctx={ctx_len}")
+                        _ARTIFACT_CACHE[(mcc, ctx_len)] = bundle
+                    logger.info(
+                        "[TPV] Hot-reloaded artifacts for MCC %d ctx=%d trained_at=%s",
+                        mcc, ctx_len, bundle.trained_at,
+                    )
             except Exception as exc:
-                print(f"[tpv_forecast] Reload failed MCC {mcc} ctx={ctx_len}: {exc}")
+                logger.warning(
+                    "[TPV] Artifact reload failed for MCC %d ctx=%d: %s",
+                    mcc, ctx_len, exc,
+                )
 
 
-def start_tpv_watcher() -> None:
+def start_artifact_watcher() -> None:
     t = threading.Thread(target=_poll_artifacts, daemon=True, name="tpv-artifact-watcher")
     t.start()
 
 
-def get_tpv_health() -> dict:
-    with _CACHE_LOCK:
-        loaded = [
-            {"mcc": mcc, "ctx_len": ctx_len, "trained_at": b.trained_at,
-             "global_q90_dollars": b.global_q90_dollars}
-            for (mcc, ctx_len), b in _ARTIFACT_CACHE.items()
-        ]
-    return {
-        "status": "ok" if loaded else "no_artifacts",
-        "supported_mccs": SUPPORTED_MCCS,
-        "loaded_bundles": loaded,
-    }
+def initialize() -> None:
+    """Called at ml_service startup. Graceful — does NOT crash if no artifacts."""
+    _init_cache()
+    if _ARTIFACT_CACHE:
+        start_artifact_watcher()
+        logger.info("[TPV] Artifact cache loaded with %d bundles", len(_ARTIFACT_CACHE))
+    else:
+        logger.warning(
+            "[TPV] No trained artifacts found — service will run in degraded "
+            "mode (simple extrapolation fallback)."
+        )
 
 
 # ---------------------------------------------------------------------------
-# Feature builders — must match train.py tpv_build_feature_matrix exactly
-# (11 prediction features, log-space)
+# Raw transaction → monthly summary aggregation
 # ---------------------------------------------------------------------------
-def _build_tpv_feature_vector(
-    ctx_months: List[TpvContextMonth],
-    pool_log_mean: float,
+
+def _aggregate_transactions(records: List[Dict[str, Any]]) -> List[_MonthSummary]:
+    df = pd.DataFrame(records)
+    if df.empty:
+        raise ValueError("onboarding_merchant_txn_df is empty.")
+
+    if "transaction_date" in df.columns and "date" not in df.columns:
+        df = df.rename(columns={"transaction_date": "date"})
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        raise ValueError("No valid dates in onboarding_merchant_txn_df.")
+
+    df["amount"] = pd.to_numeric(df.get("amount"), errors="coerce").fillna(0.0)
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+
+    summaries: List[_MonthSummary] = []
+    for (yr, mo), grp in df.groupby(["year", "month"]):
+        amounts = grp["amount"].values.astype(float)
+        tpv = float(amounts.sum())
+        txn_count = len(amounts)
+        avg_val = float(amounts.mean()) if txn_count > 0 else 0.0
+        std_val = float(amounts.std(ddof=0)) if txn_count > 1 else 0.0
+        med_val = float(np.median(amounts)) if txn_count > 0 else 0.0
+
+        cost_type_pcts: Optional[Dict[str, float]] = None
+        if "cost_type_ID" in grp.columns:
+            ct = grp["cost_type_ID"].fillna(-1).astype(int).astype(str)
+            counts = ct.value_counts(normalize=True)
+            cost_type_pcts = {
+                f"cost_type_{k}_pct": float(v) for k, v in counts.items()
+            }
+
+        summaries.append(_MonthSummary(
+            year=int(yr), month=int(mo),
+            total_processing_value=tpv, transaction_count=txn_count,
+            avg_transaction_value=avg_val, std_txn_amount=std_val,
+            median_txn_amount=med_val, cost_type_pcts=cost_type_pcts,
+        ))
+
+    summaries.sort(key=lambda s: (s.year, s.month))
+    return summaries
+
+
+# ---------------------------------------------------------------------------
+# Pool-mean & kNN peer computation from reference DB
+# ---------------------------------------------------------------------------
+
+def _compute_pool_info(
+    repo: MerchantRepository,
+    mcc: int,
+    card_types: List[str],
+    context_months: List[_MonthSummary],
+) -> Tuple[float, float, List[int]]:
+    ref_txn = repo.load_transactions(mcc, card_types)
+    if ref_txn.empty:
+        raise ValueError(f"No reference transactions in the database for MCC {mcc}.")
+
+    if "transaction_date" in ref_txn.columns and "date" not in ref_txn.columns:
+        ref_txn = ref_txn.rename(columns={"transaction_date": "date"})
+    ref_txn["date"] = pd.to_datetime(ref_txn["date"], errors="coerce")
+    ref_txn = ref_txn.dropna(subset=["date"])
+    ref_txn["amount"] = pd.to_numeric(ref_txn.get("amount"), errors="coerce").fillna(0.0)
+    ref_txn["year"] = ref_txn["date"].dt.year
+    ref_txn["month"] = ref_txn["date"].dt.month
+
+    last = context_months[-1]
+    end_yr, end_mo = last.year, last.month
+
+    snap = ref_txn[
+        (ref_txn["year"] < end_yr)
+        | ((ref_txn["year"] == end_yr) & (ref_txn["month"] <= end_mo))
+    ]
+    if snap.empty:
+        return 0.0, 0.0, []
+
+    merchant_monthly = (
+        snap.groupby(["merchant_id", "year", "month"])["amount"]
+        .sum().reset_index()
+        .rename(columns={"amount": "total_processing_value"})
+    )
+    merchant_monthly["log_tpv"] = np.log1p(merchant_monthly["total_processing_value"])
+    flat_pool_mean = float(merchant_monthly["log_tpv"].mean())
+
+    cost_type_ids = repo.load_cost_type_ids()
+    if not cost_type_ids:
+        return flat_pool_mean, flat_pool_mean, []
+
+    snap_ct = snap.copy()
+    snap_ct["cost_type_ID"] = (
+        snap_ct.get("cost_type_ID").fillna(-1).astype(int).astype(str)
+    )
+    ref_ct_counts = (
+        snap_ct.groupby(["merchant_id", "cost_type_ID"])
+        .size().rename("count").reset_index()
+        .pivot_table(index="merchant_id", columns="cost_type_ID",
+                     values="count", fill_value=0)
+    )
+    ref_ct_counts = ref_ct_counts.reindex(columns=cost_type_ids, fill_value=0)
+    ref_totals = ref_ct_counts.sum(axis=1)
+    ref_pct = ref_ct_counts.div(ref_totals, axis=0).fillna(0.0)
+
+    onb_ct: Dict[str, float] = defaultdict(float)
+    total_ct_count = 0
+    for m in context_months:
+        if m.cost_type_pcts:
+            for key, val in m.cost_type_pcts.items():
+                ct_id = key.replace("cost_type_", "").replace("_pct", "")
+                onb_ct[ct_id] += val * m.transaction_count
+                total_ct_count += val * m.transaction_count
+
+    if total_ct_count > 0:
+        for k in onb_ct:
+            onb_ct[k] /= total_ct_count
+
+    onb_vec = pd.DataFrame(
+        [{ct: onb_ct.get(ct, 0.0) for ct in cost_type_ids}]
+    ).fillna(0.0)
+
+    merchant_log_tpv = merchant_monthly.groupby("merchant_id")["log_tpv"].mean()
+    common_mids = ref_pct.index.intersection(merchant_log_tpv.index)
+    if len(common_mids) < KNN_K + 1:
+        return flat_pool_mean, flat_pool_mean, []
+
+    ref_pct_aligned = ref_pct.loc[common_mids]
+    merchant_log_tpv_aligned = merchant_log_tpv.loc[common_mids]
+
+    nn = NearestNeighbors(
+        n_neighbors=min(KNN_K + 1, len(common_mids)),
+        metric="cosine",
+    )
+    nn.fit(ref_pct_aligned.values)
+    _, raw_idx = nn.kneighbors(
+        onb_vec.reindex(columns=ref_pct_aligned.columns, fill_value=0.0).values
+    )
+
+    mid_index = ref_pct_aligned.index.tolist()
+    top_ids = [mid_index[i] for i in raw_idx[0]][:KNN_K]
+
+    knn_pool_mean = float(merchant_log_tpv_aligned.loc[top_ids].mean()) if top_ids else flat_pool_mean
+    peer_ids = [int(mid) for mid in top_ids]
+    return flat_pool_mean, knn_pool_mean, peer_ids
+
+
+# ---------------------------------------------------------------------------
+# Feature construction
+# ---------------------------------------------------------------------------
+
+def _build_feature_vector(
+    context_months: List[_MonthSummary],
+    pool_mean: float,
 ) -> np.ndarray:
-    """Returns (1, 11) feature matrix in log-space."""
-    tpv_vals = np.array([m.total_payment_volume for m in ctx_months], dtype=float)
-    log_vals = np.log1p(tpv_vals)  # log1p(monthly_TPV)
-
+    log_vals = np.array(
+        [np.log1p(m.total_processing_value) for m in context_months], dtype=float,
+    )
     c_mean = float(np.mean(log_vals))
     c_std = float(np.std(log_vals))
-    mom = float(log_vals[-1] - c_mean)
+    momentum = float(log_vals[-1] - c_mean)
+
+    txn_amount_std = float(np.mean([m.std_txn_amount for m in context_months]))
+    log_txn = float(np.log1p(np.mean([m.transaction_count for m in context_months])))
+    avg_median_gap = float(np.mean(
+        [abs(m.avg_transaction_value - m.median_txn_amount) for m in context_months]
+    ))
+
     last_month = float(log_vals[-1])
+    log_avg_txn_val = float(np.log1p(
+        np.mean([m.avg_transaction_value for m in context_months])
+    ))
 
-    atv_vals = np.array([m.avg_transaction_value for m in ctx_months], dtype=float)
-    avg_atv = float(np.mean(atv_vals))
-    log_avg_txn_val = float(np.log1p(avg_atv))
-
-    tc_vals = np.array([m.transaction_count for m in ctx_months], dtype=float)
-    log_txn = float(np.log1p(np.mean(tc_vals)))
-
-    std_vals = np.array([m.std_txn_amount for m in ctx_months], dtype=float)
-    txn_amount_std = float(np.mean(std_vals))
-
-    median_vals = np.array(
-        [m.median_txn_amount if m.median_txn_amount is not None else m.avg_transaction_value
-         for m in ctx_months],
-        dtype=float,
+    tc_vals = np.array(
+        [np.log1p(m.transaction_count) for m in context_months], dtype=float,
     )
-    avg_median_gap = float(np.mean(np.abs(atv_vals - median_vals)))
+    atv_vals = np.array(
+        [np.log1p(m.avg_transaction_value) for m in context_months], dtype=float,
+    )
+    mom_tc = float(tc_vals[-1] - np.mean(tc_vals))
+    mom_atv = float(atv_vals[-1] - np.mean(atv_vals))
 
-    tc_log_vals = np.log1p(tc_vals)
-    atv_log_vals = np.log1p(atv_vals)
-    mom_tc = float(tc_log_vals[-1] - np.mean(tc_log_vals))
-    mom_atv = float(atv_log_vals[-1] - np.mean(atv_log_vals))
-
-    # Feature order must match notebook Cell 8 tpv_build_feature_matrix:
-    # [c_mean, c_std, mom, p_mean, txn_amount_std, log_txn,
-    #  avg_median_gap, last_month, log_avg_txn_val, mom_tc, mom_atv]
     return np.array(
-        [[c_mean, c_std, mom, pool_log_mean, txn_amount_std, log_txn,
-          avg_median_gap, last_month, log_avg_txn_val, mom_tc, mom_atv]],
+        [[c_mean, c_std, momentum, pool_mean,
+          txn_amount_std, log_txn, avg_median_gap,
+          last_month, log_avg_txn_val, mom_tc, mom_atv]],
         dtype=float,
     )
 
 
-def _build_tpv_risk_vector(
-    ctx_months: List[TpvContextMonth],
-    pool_log_mean: float,
-    knn_pool_log_mean: float,
+def _build_risk_vector(
+    context_months: List[_MonthSummary],
+    pool_mean: float,
+    knn_pool_mean: float,
 ) -> np.ndarray:
-    """Returns (1, 11) risk feature matrix — must match train.py tpv_build_risk_features."""
-    tpv_vals = np.array([m.total_payment_volume for m in ctx_months], dtype=float)
-    log_vals = np.log1p(tpv_vals)
+    log_vals = np.array(
+        [np.log1p(m.total_processing_value) for m in context_months], dtype=float,
+    )
     c_mean = float(np.mean(log_vals))
+    _denom = c_mean + _VOL_EPS
 
-    atv_vals = np.array([m.avg_transaction_value for m in ctx_months], dtype=float)
-    avg_atv = float(np.mean(atv_vals)) + _EPS
+    avg_txn_val = float(np.mean([m.avg_transaction_value for m in context_months]))
+    intra_txn_cov = float(np.mean([m.std_txn_amount for m in context_months])) / (avg_txn_val + _VOL_EPS)
+    avg_median_gap = float(np.mean(
+        [abs(m.avg_transaction_value - m.median_txn_amount) for m in context_months]
+    )) / (avg_txn_val + _VOL_EPS)
+    log_txn_count = float(np.log1p(np.mean([m.transaction_count for m in context_months])))
 
-    std_vals = np.array([m.std_txn_amount for m in ctx_months], dtype=float)
-    intra_txn_cov = float(np.mean(std_vals)) / avg_atv
+    ct_vals_list = []
+    for m in context_months:
+        if m.cost_type_pcts:
+            ct_vals_list.append(list(m.cost_type_pcts.values()))
+    if ct_vals_list:
+        avg_ct = np.mean(ct_vals_list, axis=0)
+        cost_type_hhi = float(np.sum(avg_ct ** 2))
+    else:
+        cost_type_hhi = 1.0
 
-    median_vals = np.array(
-        [m.median_txn_amount if m.median_txn_amount is not None else m.avg_transaction_value
-         for m in ctx_months],
-        dtype=float,
+    log_avg_txn_val = float(np.log1p(avg_txn_val))
+    txn_amount_cov = float(
+        np.mean([m.std_txn_amount for m in context_months])
+    ) / (avg_txn_val + _VOL_EPS)
+
+    pool_gap = abs(c_mean - pool_mean) / (pool_mean + _VOL_EPS)
+    knn_gap = abs(c_mean - knn_pool_mean) / (knn_pool_mean + _VOL_EPS)
+    ctx_cov = float(np.std(log_vals)) / _denom
+
+    tc_vals = np.array(
+        [np.log1p(m.transaction_count) for m in context_months], dtype=float,
     )
-    avg_median_gap = float(np.mean(np.abs(atv_vals - median_vals))) / avg_atv
+    atv_vals = np.array(
+        [np.log1p(m.avg_transaction_value) for m in context_months], dtype=float,
+    )
+    tc_mean = float(np.mean(tc_vals))
+    atv_mean = float(np.mean(atv_vals))
+    tc_cov = float(np.std(tc_vals)) / (tc_mean + _VOL_EPS)
+    atv_cov = float(np.std(atv_vals)) / (atv_mean + _VOL_EPS)
 
-    tc_vals = np.array([m.transaction_count for m in ctx_months], dtype=float)
-    log_txn_count = float(np.log1p(np.mean(tc_vals)))
-
-    cost_type_hhi = 1.0  # no cost-type breakdown in volume context
-    log_avg_txn_val = float(np.log1p(float(np.mean(atv_vals))))
-    txn_amount_cov = float(np.mean(std_vals)) / avg_atv
-
-    pool_gap = abs(c_mean - pool_log_mean) / (pool_log_mean + _EPS)
-    knn_gap = abs(c_mean - knn_pool_log_mean) / (knn_pool_log_mean + _EPS)
-    ctx_cov = float(np.std(log_vals)) / (c_mean + _EPS)
-
-    tc_log_vals = np.log1p(tc_vals)
-    atv_log_vals = np.log1p(np.array([m.avg_transaction_value for m in ctx_months], dtype=float))
-    tc_cov = float(np.std(tc_log_vals)) / (float(np.mean(tc_log_vals)) + _EPS)
-    atv_cov = float(np.std(atv_log_vals)) / (float(np.mean(atv_log_vals)) + _EPS)
-
-    # Feature order must match notebook tpv_build_risk_features:
-    # [intra_txn_cov, avg_median_gap, log_txn_count, cost_type_hhi,
-    #  log_avg_txn_val, txn_amount_cov, pool_gap, knn_gap, ctx_cov, tc_cov, atv_cov]
     return np.array(
-        [[intra_txn_cov, avg_median_gap, log_txn_count, cost_type_hhi,
-          log_avg_txn_val, txn_amount_cov, pool_gap, knn_gap, ctx_cov, tc_cov, atv_cov]],
+        [[intra_txn_cov, avg_median_gap, log_txn_count,
+          cost_type_hhi, log_avg_txn_val, txn_amount_cov,
+          pool_gap, knn_gap, ctx_cov,
+          tc_cov, atv_cov]],
         dtype=float,
     )
 
 
 # ---------------------------------------------------------------------------
-# Conformal half-width
+# Conformal quantile helpers
 # ---------------------------------------------------------------------------
-def _adaptive_q(residuals: list, target: float = TARGET_COV) -> Optional[float]:
+
+def _adaptive_q(residuals: List[float], target: float = TARGET_COV) -> Optional[float]:
     n = len(residuals)
     level = math.ceil((n + 1) * target) / n
     return float(np.quantile(residuals, level)) if level <= 1.0 else None
 
 
-def _compute_tpv_hw(
-    bundle: TpvArtifactBundle,
-    ctx_months: List[TpvContextMonth],
-    pool_log_mean: float,
-    knn_pool_log_mean: float,
-    ci: float,
-    mid: float,
-) -> Tuple[float, int, str]:
-    """
-    Compute conformal half-width in dollar space.
+def _compute_conformal_hw(
+    peer_merchant_ids: Optional[List[int]],
+    bundle: ArtifactBundle,
+    context_months: List[_MonthSummary],
+    pool_mean: float,
+    knn_pool_mean: float,
+    confidence_interval: float,
+) -> Tuple[float, int, str, Optional[float], Optional[str]]:
+    peer_residuals: List[float] = []
+    if peer_merchant_ids:
+        for pid in peer_merchant_ids:
+            peer_residuals.extend(bundle.cal_residuals.get(pid, []))
 
-    Falls back through: local calibration residuals → risk-stratified → global q90.
-    Always applies minimum relative floor so the CI is meaningful at any volume scale.
-    """
-    # Attempt local pool: for TPV there are no per-merchant peer IDs at inference time
-    # (no KNN lookup at runtime), so we always fall through to global fallback.
+    if len(peer_residuals) >= MIN_POOL:
+        q = _adaptive_q(peer_residuals, target=confidence_interval)
+        if q is not None:
+            return float(q), len(peer_residuals), "local", None, None
 
-    # Risk score from GBR ensemble
-    risk_vec = _build_tpv_risk_vector(ctx_months, pool_log_mean, knn_pool_log_mean)
-    scores = np.array([m.predict(risk_vec)[0] for m in bundle.risk_models], dtype=float)
+    risk_vec = _build_risk_vector(context_months, pool_mean, knn_pool_mean)
+    scores = np.array(
+        [m.predict(risk_vec)[0] for m in bundle.risk_models], dtype=float,
+    )
     risk_score = float(np.max(scores))
-    _ = risk_score  # available if stratified scheme is added later
 
-    hw_abs = bundle.global_q90_dollars
-    # Scale-proportional floor: CI must be at least ±10% of mid
-    hw = max(hw_abs, _MIN_CI_RELATIVE * mid)
-    return hw, 0, "global_fallback"
+    if bundle.strat_enabled and bundle.strat_knot_x is not None:
+        hw = float(np.interp(
+            risk_score,
+            bundle.strat_knot_x,
+            bundle.strat_q_vals,
+            left=bundle.strat_q_vals[0],
+            right=bundle.strat_q_vals[-1],
+        ))
+        return hw, len(peer_residuals), "stratified", risk_score, bundle.strat_scheme
+
+    return (
+        bundle.global_q90,
+        len(peer_residuals),
+        "global_fallback",
+        risk_score,
+        None,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Bundle resolution
 # ---------------------------------------------------------------------------
-def _resolve_bundle(mcc: int, ctx_len: int) -> TpvArtifactBundle:
+
+def _resolve_bundle(mcc: int, ctx_len: int) -> Optional[ArtifactBundle]:
+    """Returns None if no artifacts are available (degraded mode)."""
     with _CACHE_LOCK:
         bundle = _ARTIFACT_CACHE.get((mcc, ctx_len))
     if bundle is not None:
         return bundle
+
     with _CACHE_LOCK:
         available = sorted([cl for (m, cl) in _ARTIFACT_CACHE if m == mcc])
     if not available:
-        raise ValueError(f"[tpv_forecast] No artifacts for MCC {mcc}")
+        return None
     nearest = min(available, key=lambda cl: abs(cl - ctx_len))
     with _CACHE_LOCK:
         return _ARTIFACT_CACHE[(mcc, nearest)]
 
 
 # ---------------------------------------------------------------------------
-# Public inference API
+# Context window selection
 # ---------------------------------------------------------------------------
-def run_tpv_forecast(payload: TpvForecastRequest) -> dict:
+
+def _select_context_window(months: List[_MonthSummary]) -> List[_MonthSummary]:
+    n = len(months)
+    valid = [cl for cl in sorted(SUPPORTED_CONTEXT_LENS, reverse=True) if cl <= n]
+    if not valid:
+        return months
+    chosen_len = valid[0]
+    return months[-chosen_len:]
+
+
+# ---------------------------------------------------------------------------
+# Degraded-mode fallback (simple extrapolation when no trained artifacts)
+# ---------------------------------------------------------------------------
+
+def _fallback_forecast(
+    context_months: List[_MonthSummary],
+    req: TPVForecastRequest,
+) -> TPVForecastResponse:
     """
-    Run Huber TPV forecast in-process using loaded artifacts.
-
-    Scale-robustness approach — "centered delta":
-    --------------------------------------------------
-    The Huber artifacts were trained on composite KNN merchants whose monthly
-    TPV is orders-of-magnitude smaller than production merchants.  Running the
-    model directly on raw features would extrapolate wildly outside the training
-    distribution.
-
-    Instead we:
-      1. Replace the absolute-log-scale features (c_mean, p_mean, log_txn,
-         last_month, log_avg_txn_val) with the training-distribution centre
-         stored in the scaler's mean_[] vector.
-      2. Run inference on this "centered" feature vector — the model now
-         operates well within its training distribution.
-      3. Interpret the output as a log-space delta relative to the training
-         centre: Δh = model_output_h − train_c_mean
-      4. Apply the delta to the actual context mean:
-             y_hat_log_h = c_mean + Δh
-         For a stable series (zero momentum) Δh ≈ 0 → flat forecast.
-         For a trending series the trained momentum signal shifts Δh.
+    Simple extrapolation-based fallback when no trained artifacts exist.
+    Uses context mean + momentum for point forecast and ±20% CI band.
     """
     generated_at = datetime.now(timezone.utc)
-    ctx_months = payload.context_months
-
-    # Select the context window we have an artifact for
-    valid = [cl for cl in sorted(SUPPORTED_CONTEXT_LENS, reverse=True) if cl <= len(ctx_months)]
-    chosen_len = valid[0] if valid else SUPPORTED_CONTEXT_LENS[0]
-    ctx_months = ctx_months[-chosen_len:]
-
-    bundle = _resolve_bundle(payload.mcc, chosen_len)
-
-    pool_log_mean = payload.pool_log_mean_at_context_end
-    knn_pool_log_mean = payload.knn_pool_log_mean_at_context_end
-
-    # Fallback: if pool means weren't provided, use context log-mean
-    log_vals_ctx = np.log1p([m.total_payment_volume for m in ctx_months])
-    ctx_log_mean = float(np.mean(log_vals_ctx))
-    if pool_log_mean == 0.0:
-        pool_log_mean = ctx_log_mean
-    if knn_pool_log_mean == 0.0:
-        knn_pool_log_mean = ctx_log_mean
-
-    # Build raw (pre-scale) feature vector
-    X_raw = _build_tpv_feature_vector(ctx_months, knn_pool_log_mean)
-
-    # ── Centered-delta inference ──────────────────────────────────────────
-    # Feature indices whose values are in absolute log-scale space and
-    # would take the scaler wildly out of distribution if left at actual values.
-    # Index:  0=c_mean, 3=p_mean, 5=log_txn, 7=last_month, 8=log_avg_txn_val
-    _SCALE_INDICES = [0, 3, 5, 7, 8]
-    X_centered = X_raw.copy()
-    for idx in _SCALE_INDICES:
-        X_centered[0, idx] = bundle.scaler.mean_[idx]
-    X_centered_scaled = bundle.scaler.transform(X_centered)
-
-    # training c_mean centre (feature 0 scaler mean)
-    train_c_mean = float(bundle.scaler.mean_[0])
-
-    horizon = min(payload.horizon_months, len(bundle.models))
-    raw_log_preds = np.array(
-        [bundle.models[h].predict(X_centered_scaled)[0] for h in range(horizon)],
-        dtype=float,
+    log_vals = np.array(
+        [np.log1p(m.total_processing_value) for m in context_months], dtype=float,
     )
-    # Delta in log-space (scale-independent trend/momentum signal)
-    log_deltas = raw_log_preds - train_c_mean
-    # Anchor to actual context mean
-    log_preds = ctx_log_mean + log_deltas
-    mid_vals = np.expm1(log_preds)
-    # ─────────────────────────────────────────────────────────────────────
+    c_mean = float(np.mean(log_vals))
+    momentum = float(log_vals[-1] - c_mean) if len(log_vals) > 1 else 0.0
+    c_mean_dollar = float(np.expm1(c_mean))
 
-    # Build forecast months with scale-appropriate CI
-    forecast: List[TpvForecastMonth] = []
-    hw_used = 0.0
-    for h in range(horizon):
-        mid = float(max(0.0, mid_vals[h]))
-        hw_abs = bundle.global_q90_dollars
-        hw = max(hw_abs, _MIN_CI_RELATIVE * mid)
-        hw_used = max(hw_used, hw)
-        forecast.append(
-            TpvForecastMonth(
-                month_index=h + 1,
-                total_proc_value_mid=mid,
-                total_proc_value_ci_lower=max(0.0, mid - hw),
-                total_proc_value_ci_upper=mid + hw,
-            )
-        )
+    # Simple: last observed TPV + small momentum-based drift
+    last_tpv = context_months[-1].total_processing_value
+    forecast = []
+    for h in range(req.horizon_months):
+        drift = momentum * (h + 1) * 0.3
+        pred_log = log_vals[-1] + drift
+        pred_dollar = float(np.expm1(pred_log))
+        hw = max(pred_dollar * 0.20, 1.0)  # 20% uncertainty band
+        forecast.append(ForecastMonth(
+            month_index=h + 1,
+            tpv_mid=pred_dollar,
+            tpv_ci_lower=max(0.0, pred_dollar - hw),
+            tpv_ci_upper=pred_dollar + hw,
+        ))
 
-    resp = TpvForecastResponse(
+    return TPVForecastResponse(
         forecast=forecast,
-        conformal_metadata=TpvConformalMetadata(
-            half_width_dollars=hw_used,
-            conformal_mode="global_fallback",
+        conformal_metadata=ConformalMetadata(
+            half_width_dollars=forecast[0].tpv_ci_upper - forecast[0].tpv_mid,
+            conformal_mode="extrapolation_fallback",
             pool_size=0,
         ),
-        process_metadata=TpvProcessMetadata(
-            context_len_used=chosen_len,
-            context_mean_log_tpv=ctx_log_mean,
-            mcc=payload.mcc,
-            model_variant="tpv_v2",
-            horizon_months=horizon,
-            confidence_interval=payload.confidence_interval,
-            generated_at_utc=generated_at.isoformat(),
-            artifact_trained_at=bundle.trained_at or "",
+        process_metadata=ProcessMetadata(
+            context_len_used=len(context_months),
+            context_mean_log_tpv=c_mean,
+            context_mean_dollar=c_mean_dollar,
+            momentum=momentum,
+            pool_mean_used=c_mean,
+            mcc=req.mcc,
+            model_variant="tpv_fallback_extrapolation",
+            horizon_months=req.horizon_months,
+            confidence_interval=req.confidence_interval,
+            generated_at_utc=generated_at,
         ),
     )
-    return resp.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def get_tpv_forecast(req: TPVForecastRequest) -> TPVForecastResponse:
+    generated_at = datetime.now(timezone.utc)
+
+    # 1. Aggregate raw transactions into monthly summaries
+    all_months = _aggregate_transactions(req.onboarding_merchant_txn_df)
+    if not all_months:
+        raise ValueError("No valid monthly data could be derived from the transactions.")
+
+    # 2. Select context window
+    context_months = _select_context_window(all_months)
+    ctx_len = len(context_months)
+
+    # 3. Resolve artifact bundle — returns None in degraded mode
+    bundle = _resolve_bundle(req.mcc, ctx_len)
+    if bundle is None:
+        logger.warning(
+            "[TPV] No artifacts for MCC %d — using extrapolation fallback",
+            req.mcc,
+        )
+        return _fallback_forecast(context_months, req)
+
+    # 4. Compute pool means + peer IDs from reference DB
+    if _REPO is None:
+        logger.warning("[TPV] No repository configured — using extrapolation fallback")
+        return _fallback_forecast(context_months, req)
+
+    flat_pool_mean, knn_pool_mean, peer_ids = _compute_pool_info(
+        repo=_REPO, mcc=req.mcc, card_types=req.card_types,
+        context_months=context_months,
+    )
+
+    # 5. Build features (log-space)
+    log_vals = [np.log1p(m.total_processing_value) for m in context_months]
+    c_mean = float(np.mean(log_vals))
+    momentum = float(log_vals[-1] - c_mean)
+    c_mean_dollar = float(np.expm1(c_mean))
+
+    X_raw = _build_feature_vector(context_months, knn_pool_mean)
+    X_scaled = bundle.scaler.transform(X_raw)
+
+    # 6. Predict HORIZON_LEN steps in log-space
+    log_preds = np.array(
+        [bundle.models[h].predict(X_scaled)[0] for h in range(req.horizon_months)],
+        dtype=float,
+    )
+
+    # 7. Back-transform to dollars
+    dollar_preds = np.expm1(log_preds)
+
+    # 8. Dollar-space conformal half-width
+    hw, pool_size, conformal_mode, risk_score, strat_scheme = _compute_conformal_hw(
+        peer_merchant_ids=peer_ids,
+        bundle=bundle,
+        context_months=context_months,
+        pool_mean=flat_pool_mean,
+        knn_pool_mean=knn_pool_mean,
+        confidence_interval=req.confidence_interval,
+    )
+
+    # 9. Assemble forecast
+    forecast = [
+        ForecastMonth(
+            month_index=h + 1,
+            tpv_mid=float(dollar_preds[h]),
+            tpv_ci_lower=max(0.0, float(dollar_preds[h]) - hw),
+            tpv_ci_upper=float(dollar_preds[h]) + hw,
+        )
+        for h in range(req.horizon_months)
+    ]
+
+    conformal_meta = ConformalMetadata(
+        half_width_dollars=hw,
+        conformal_mode=conformal_mode,
+        pool_size=pool_size,
+        risk_score=risk_score,
+        strat_scheme=strat_scheme,
+    )
+
+    process_meta = ProcessMetadata(
+        context_len_used=ctx_len,
+        context_mean_log_tpv=c_mean,
+        context_mean_dollar=c_mean_dollar,
+        momentum=momentum,
+        pool_mean_used=knn_pool_mean,
+        mcc=req.mcc,
+        horizon_months=req.horizon_months,
+        confidence_interval=req.confidence_interval,
+        generated_at_utc=generated_at,
+        artifact_trained_at=bundle.trained_at,
+        strat_enabled=bundle.strat_enabled,
+    )
+
+    return TPVForecastResponse(
+        forecast=forecast,
+        conformal_metadata=conformal_meta,
+        process_metadata=process_meta,
+    )

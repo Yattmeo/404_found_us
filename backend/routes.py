@@ -400,7 +400,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     Reuses backend orchestration to call 3 ML endpoints:
       1) /ml/getCompositeMerchant
       2) /ml/GetCostForecast
-      3) /ml/GetTPVForecast
+      3) /ml/GetVolumeForecast
     """
     transactions = data.get("transactions", [])
     mcc = data.get("mcc")
@@ -529,20 +529,18 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         if not card_types:
             card_types = ["both"]
 
-    cost_rate_for_onboarding = float(base_cost_rate) if base_cost_rate is not None else recommended_rate
-
     if use_aggregate_inputs:
         onboarding_rows = MerchantQuoteService._build_onboarding_rows(
             avg_ticket=result["average_ticket"],
             monthly_txn_count=result["transaction_count"],
             brands=["visa", "mastercard"],
-            effective_rate_pct=cost_rate_for_onboarding * 100.0,
+            effective_rate_pct=recommended_rate * 100.0,
         )
     else:
         onboarding_rows = MerchantQuoteService.build_onboarding_rows_from_transactions(
             transactions=transactions,
             card_type=card_type,
-            effective_rate_pct=cost_rate_for_onboarding * 100.0,
+            effective_rate_pct=recommended_rate * 100.0,
         )
 
     pipeline = MerchantQuoteService.run_ml_forecast_pipeline(
@@ -550,8 +548,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         card_types=card_types,
         onboarding_rows=onboarding_rows,
         base_cost_rate=float(base_cost_rate) if base_cost_rate is not None else None,
-        fee_rate=float(recommended_rate),
-        rate_grid_pct=data.get("rate_grid_pct"),
+        fee_rate=recommended_rate if recommended_rate > 0 else None,
     )
 
     def _safe_float(value: object, default: float = 0.0) -> float:
@@ -564,16 +561,6 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         base = datetime.now(timezone.utc).date()
         day = base + timedelta(days=(7 * (index - 1)))
         return f"W{index} ({day.isoformat()})"
-
-    def _month_label(month_index: int) -> str:
-        """Return a month label like 'Apr 2026' for the given 1-based month offset."""
-        base = datetime.now(timezone.utc).date().replace(day=1)
-        # Advance by (month_index - 1) months
-        month = base.month + (month_index - 1)
-        year = base.year + (month - 1) // 12
-        month = ((month - 1) % 12) + 1
-        target = base.replace(year=year, month=month, day=1)
-        return target.strftime("%b %Y")
 
     transaction_dates = []
     merchant_id = data.get("merchant_id")
@@ -605,186 +592,189 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     if pipeline is not None:
         composite_payload = pipeline.get("composite") or {}
         cost_payload = pipeline.get("cost") or {}
-        volume_payload = pipeline.get("volume") or {}
-        profit_payload = pipeline.get("profit")
+        tpv_payload = pipeline.get("tpv") or {}
+        profit_payload = pipeline.get("profit") or {}
         cost_forecast = cost_payload.get("forecast", [])
-        volume_forecast = volume_payload.get("forecast", [])
+        tpv_forecast = tpv_payload.get("forecast", [])
 
-        # Build weekly cost series for chart display only
-        weekly_cost_series = []
         for item in cost_forecast:
-            idx = int(item.get("forecast_week_index") or 0)
-            weekly_cost_series.append(
+            idx = int(item.get("month_index") or 0)
+            cost_series.append(
                 {
-                    "week_index": idx,
-                    "label": _week_label(idx),
+                    "month_index": idx,
+                    "label": f"Month {idx}",
                     "mid": _safe_float(item.get("proc_cost_pct_mid"), 0.0),
                     "lower": _safe_float(item.get("proc_cost_pct_ci_lower"), 0.0),
                     "upper": _safe_float(item.get("proc_cost_pct_ci_upper"), 0.0),
                 }
             )
 
-        # Aggregate weekly into monthly for the chart display (4 weeks per month)
-        for m_idx in range(0, len(weekly_cost_series), 4):
-            chunk = weekly_cost_series[m_idx : m_idx + 4]
-            if not chunk:
-                continue
-            month_number = (m_idx // 4) + 1
-            cost_series.append(
-                {
-                    "month_index": month_number,
-                    "label": _month_label(month_number),
-                    "mid": sum(c["mid"] for c in chunk) / len(chunk),
-                    "lower": min(c["lower"] for c in chunk),
-                    "upper": max(c["upper"] for c in chunk),
-                }
-            )
-
-        # Aggregate weekly volume into monthly for the chart display (4 weeks per month)
-        _weekly_vol = []
-        for item in volume_forecast:
-            _weekly_vol.append(
-                {
-                    "mid": _safe_float(item.get("total_proc_value_mid"), 0.0),
-                    "lower": _safe_float(item.get("total_proc_value_ci_lower"), 0.0),
-                    "upper": _safe_float(item.get("total_proc_value_ci_upper"), 0.0),
-                }
-            )
-        for m_idx in range(0, len(_weekly_vol), 4):
-            chunk = _weekly_vol[m_idx : m_idx + 4]
-            if not chunk:
-                continue
-            month_number = (m_idx // 4) + 1
+        for item in tpv_forecast:
+            idx = int(item.get("month_index") or 0)
             volume_series.append(
                 {
-                    "month_index": month_number,
-                    "label": _month_label(month_number),
-                    "mid": sum(c["mid"] for c in chunk) / len(chunk),
-                    "lower": min(c["lower"] for c in chunk),
-                    "upper": max(c["upper"] for c in chunk),
+                    "week_index": idx,
+                    "label": f"Month {idx}",
+                    "mid": _safe_float(item.get("tpv_mid"), 0.0),
+                    "lower": _safe_float(item.get("tpv_ci_lower"), 0.0),
+                    "upper": _safe_float(item.get("tpv_ci_upper"), 0.0),
                 }
             )
 
-        # ── Use Monte Carlo profit forecast results when available ────────
-        _sarima_degenerate = False
-        if profit_payload and profit_payload.get("summary"):
-            mc_summary = profit_payload["summary"]
+        # Monte Carlo profit forecast results
+        if profit_payload:
             mc_months = profit_payload.get("months", [])
+            mc_summary = profit_payload.get("summary", {})
+            if mc_months:
+                estimated_profit_min = _safe_float(mc_summary.get("total_profit_mid"), 0.0)
+                profit_ci_low = sum(
+                    _safe_float(m.get("profit_ci_lower"), 0.0) for m in mc_months
+                )
+                profit_ci_high = sum(
+                    _safe_float(m.get("profit_ci_upper"), 0.0) for m in mc_months
+                )
+                estimated_profit_min = min(profit_ci_low, estimated_profit_min)
+                estimated_profit_max = max(profit_ci_high, _safe_float(mc_summary.get("total_profit_mid"), 0.0))
 
-            estimated_profit_min = _safe_float(mc_summary.get("estimated_profit_min"), 0.0)
-            estimated_profit_max = _safe_float(mc_summary.get("estimated_profit_max"), 0.0)
+                avg_p_profitable = _safe_float(mc_summary.get("avg_p_profitable"), 0.0)
+                if avg_p_profitable > 0:
+                    summary_profitability_pct = round(avg_p_profitable * 100.0, 2)
 
-            total_revenue = _safe_float(mc_summary.get("total_revenue_mid"), 0.0)
-            total_profit = _safe_float(mc_summary.get("total_profit_mid"), 0.0)
-            if total_revenue > 0:
-                summary_profitability_pct = max(-100.0, min(100.0, (total_profit / total_revenue) * 100.0))
-
-            # NOTE: fixed-fee revenue is NOT added here because the MC simulation
-            # only models variable profit = volume × (fee_rate - cost_pct).
-            # Adding a fixed-fee offset to the CI bounds would make the profit range
-            # inconsistent with the probability_pct (which has no fixed-fee component).
-
-            # ── Detect degenerate SARIMA volume ──────────────────────────
-            # When the SARIMA forecast returns near-zero volume (e.g. new merchant
-            # with no recent KNN history), the MC profit CI is also near-zero and
-            # wildly inconsistent with the historical volume shown in the UI.
-            # Rescale the profit bounds using historical monthly volume × the same
-            # cost CI from the M9 forecast so the dollar range is meaningful.
-            total_mc_mid_volume = sum(_safe_float(m.get("tpv_mid"), 0.0) for m in mc_months)
-            historical_total_volume = _safe_float(result.get("total_volume"), 0.0)
-
-            hist_months = 1.0
-            _hist_start = tx_summary.get("start_date")
-            _hist_end = tx_summary.get("end_date")
-            if _hist_start and _hist_end:
-                try:
-                    from datetime import date as _date
-                    _d0 = _date.fromisoformat(str(_hist_start)[:10])
-                    _d1 = _date.fromisoformat(str(_hist_end)[:10])
-                    hist_months = max(1.0, (_d1 - _d0).days / 30.44)
-                except Exception:
-                    pass
-
-            hist_monthly_volume = historical_total_volume / hist_months
-            # Expected horizon volume matched to MC horizon length (weeks→months)
-            mc_horizon_months = max(1, len(mc_months))
-            expected_horizon_volume = hist_monthly_volume * mc_horizon_months
-
-            _sarima_degenerate = (
-                expected_horizon_volume > 0
-                and total_mc_mid_volume < 0.10 * expected_horizon_volume
-                and cost_series
-            )
-            if _sarima_degenerate:
-                # SARIMA is degenerate — rescale profit CI with historical volume
-                n_cost_months = max(1, len(cost_series))
-                avg_cost_lower = sum(c["lower"] for c in cost_series) / n_cost_months
-                avg_cost_upper = sum(c["upper"] for c in cost_series) / n_cost_months
-                # cost_series values are in raw M9 units (e.g. 1.27 = 1.27%)
-                # — normalise to decimal fraction the same way the ML service does
-                if avg_cost_lower > 0.5 or avg_cost_upper > 0.5:
-                    avg_cost_lower /= 100.0
-                    avg_cost_upper /= 100.0
-                estimated_profit_min = expected_horizon_volume * (recommended_rate - avg_cost_upper)
-                estimated_profit_max = expected_horizon_volume * (recommended_rate - avg_cost_lower)
-
-                # Also replace the degenerate SARIMA volume_series with a flat
-                # historical-volume baseline so the Volume Trend chart shows
-                # meaningful numbers instead of near-zero SARIMA output.
-                # monthly = historical monthly avg; bounds at ±20% as a simple CI.
-                _monthly_hist = hist_monthly_volume
-                volume_series = [
-                    {
-                        "month_index": pt["month_index"],
-                        "label": pt["label"],
-                        "mid": round(_monthly_hist, 2),
-                        "lower": round(_monthly_hist * 0.80, 2),
-                        "upper": round(_monthly_hist * 1.20, 2),
-                    }
-                    for pt in volume_series
-                ]
-
-            # Profitability curve from Monte Carlo
-            profitability_curve = mc_summary.get("profitability_curve", [])
-
-        # ── Fallback: simple deterministic estimate when MC not available ──
-        elif min(len(weekly_cost_series), len(volume_series)) > 0:
-            paired_len = min(len(weekly_cost_series), len(volume_series))
-            mid_total_profit = 0.0
-            mid_total_revenue = 0.0
-            low_total = 0.0
-            high_total = 0.0
+                # Build profitability curve from Monte Carlo anchor point
+                # Use break_even_rate + MC spread to fit Gaussian CDF shape
+                break_even_rate = _safe_float(mc_summary.get("break_even_fee_rate"), recommended_rate * 0.9)
+                # σ calibrated so that the CDF equals avg_p_profitable at recommended_rate
+                from math import erf, sqrt as _sqrt
+                z_recommended = (recommended_rate - break_even_rate)
+                mc_sigma = max(z_recommended / max(_safe_float(mc_summary.get("avg_p_profitable"), 0.5) + 0.01, 0.01), 0.001)
+        elif len(cost_series) > 0 and len(volume_series) > 0:
+            # Fallback: derive profitability from cost + tpv series when no MC
+            paired_len = min(len(cost_series), len(volume_series))
             for idx in range(paired_len):
-                c = weekly_cost_series[idx]
+                c = cost_series[idx]
                 v = volume_series[idx]
                 c_lower = max(0.0, c["lower"])
                 c_upper = max(c_lower, c["upper"])
                 c_mid = max(0.0, c["mid"])
-                low_total += v["lower"] * (recommended_rate - c_upper)
-                high_total += v["upper"] * (recommended_rate - c_lower)
-                mid_total_profit += v["mid"] * (recommended_rate - c_mid)
-                mid_total_revenue += v["mid"] * recommended_rate
+                estimated_profit_min = (estimated_profit_min or 0.0) + v["lower"] * (recommended_rate - c_upper)
+                estimated_profit_max = (estimated_profit_max or 0.0) + v["upper"] * (recommended_rate - c_lower)
 
-            fixed_fee_per_txn = _safe_float(result.get("minimum_fee"), 0.0)
-            forecast_avg_ticket = _safe_float(result.get("average_ticket"), 0.0)
-            total_forecast_mid_volume = sum(
-                max(0.0, _safe_float(volume_series[i]["mid"], 0.0))
-                for i in range(paired_len)
-            )
-            implied_horizon_txns = (
-                total_forecast_mid_volume / forecast_avg_ticket
-                if forecast_avg_ticket > 0
-                else 0.0
-            )
-            horizon_fixed_fee = fixed_fee_per_txn * implied_horizon_txns
-            low_total += horizon_fixed_fee
-            high_total += horizon_fixed_fee
+        # Profitability curve: use Monte Carlo results or Gaussian CDF fallback
+        if profit_payload and profit_payload.get("months"):
+            mc_summary = profit_payload.get("summary", {})
+            break_even_rate = _safe_float(mc_summary.get("break_even_fee_rate"), recommended_rate * 0.9)
+            anchor_p = _safe_float(mc_summary.get("avg_p_profitable"), 0.5)
+            # Fit σ: CDF(recommended_rate; break_even, σ) ≈ anchor_p
+            spread_sigma = max(abs(recommended_rate - break_even_rate) / max(anchor_p, 0.01), 0.0015)
 
-            estimated_profit_min = min(low_total, high_total)
-            estimated_profit_max = max(low_total, high_total)
+            default_rate_grid = [
+                1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
+            ]
+            user_grid = data.get("rate_grid_pct")
+            if isinstance(user_grid, list) and user_grid:
+                rate_grid = []
+                for value in user_grid:
+                    try:
+                        rate_grid.append(float(value))
+                    except (TypeError, ValueError):
+                        continue
+                if not rate_grid:
+                    rate_grid = default_rate_grid
+            else:
+                rate_grid = default_rate_grid
 
-            if mid_total_revenue > 0:
-                summary_profitability_pct = max(-100.0, min(100.0, (mid_total_profit / mid_total_revenue) * 100.0))
+            recommended_rate_pct = round(recommended_rate * 100.0, 2)
+            if recommended_rate_pct not in rate_grid:
+                rate_grid.append(recommended_rate_pct)
+            rate_grid = sorted(set(rate_grid))
+
+            for rate_pct in rate_grid:
+                rate_decimal = rate_pct / 100.0
+                probability_pct = MerchantQuoteService.normal_cdf(rate_decimal, break_even_rate, spread_sigma) * 100.0
+                profitability_pct = ((rate_decimal - break_even_rate) / max(break_even_rate, 0.001)) * 100.0
+                profitability_curve.append(
+                    {
+                        "rate_pct": round(rate_pct, 2),
+                        "probability_pct": round(max(0.0, min(100.0, probability_pct)), 2),
+                        "profitability_pct": round(profitability_pct, 2),
+                    }
+                )
+
+        elif len(cost_series) > 0 and len(volume_series) > 0:
+            # Fallback profitability curve from cost + TPV series when no MC forecast
+            default_rate_grid = [
+                1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
+            ]
+            recommended_rate_pct = round(recommended_rate * 100.0, 2)
+            user_grid = data.get("rate_grid_pct")
+            if isinstance(user_grid, list) and user_grid:
+                rate_grid = []
+                for value in user_grid:
+                    try:
+                        rate_grid.append(float(value))
+                    except (TypeError, ValueError):
+                        continue
+                if not rate_grid:
+                    rate_grid = default_rate_grid
+            else:
+                rate_grid = default_rate_grid
+
+            if recommended_rate_pct not in rate_grid:
+                rate_grid.append(recommended_rate_pct)
+            rate_grid = sorted(set(rate_grid))
+
+            # Pre-compute rate-independent cost uncertainty spread for monotonic curve
+            cost_uncertainty_spread = 0.0
+            mid_total_revenue_at_rec = 0.0
+            mid_total_profit_at_rec = 0.0
+            for idx in range(paired_len):
+                c = cost_series[idx]
+                v = volume_series[idx]
+                c_half_width = (max(0.0, c["upper"]) - max(0.0, c["lower"])) / 2.0
+                cost_uncertainty_spread += max(0.0, v["mid"]) * c_half_width
+                c_mid = max(0.0, c["mid"])
+                mid_total_revenue_at_rec += max(0.0, v["mid"]) * recommended_rate
+                mid_total_profit_at_rec += max(0.0, v["mid"]) * (recommended_rate - c_mid)
+
+            if mid_total_revenue_at_rec > 0:
+                summary_profitability_pct = max(
+                    -100.0,
+                    min(100.0, (mid_total_profit_at_rec / mid_total_revenue_at_rec) * 100.0),
+                )
+
+            for rate_pct in rate_grid:
+                rate_decimal = rate_pct / 100.0
+                mid_total_rate = 0.0
+                total_mid_volume = 0.0
+                total_mid_revenue = 0.0
+
+                for idx in range(paired_len):
+                    c = cost_series[idx]
+                    v = volume_series[idx]
+                    c_mid = max(0.0, c["mid"])
+
+                    mid_total_rate += v["mid"] * (rate_decimal - c_mid)
+                    total_mid_volume += max(0.0, v["mid"])
+                    total_mid_revenue += max(0.0, v["mid"]) * rate_decimal
+
+                spread_band = max(
+                    cost_uncertainty_spread,
+                    total_mid_revenue * 0.08,
+                    1e-9,
+                )
+                probability_pct = MerchantQuoteService.normal_cdf(mid_total_rate, 0.0, spread_band) * 100.0
+
+                profitability_pct = 0.0
+                if total_mid_volume > 0:
+                    profitability_pct = (mid_total_rate / total_mid_volume) * 100.0
+
+                profitability_curve.append(
+                    {
+                        "rate_pct": round(rate_pct, 2),
+                        "probability_pct": round(max(0.0, min(100.0, probability_pct)), 2),
+                        "profitability_pct": round(profitability_pct, 2),
+                    }
+                )
 
         ml_context = {
             "k": int(composite_payload.get("k") or 0),
@@ -793,9 +783,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             "matching_end_month": composite_payload.get("matching_end_month"),
             "matched_neighbor_merchant_ids": composite_payload.get("matched_neighbor_merchant_ids", []),
             "cost_forecast_metadata": cost_payload.get("conformal_metadata"),
-            "volume_forecast_metadata": volume_payload.get("sarima_metadata"),
-            "profit_forecast_method": "monte_carlo" if profit_payload else "deterministic_fallback",
-            "sarima_degenerate": _sarima_degenerate,
+            "tpv_forecast_metadata": tpv_payload.get("process_metadata") if tpv_payload else None,
         }
 
     if not profitability_curve:
@@ -818,62 +806,34 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 }
             )
 
-    # fallback_profit = net profit at the recommended rate using historical volume.
-    # This is used only as a last resort when the ML pipeline returns nothing.
-    # Do NOT use estimated_total_fees (gross revenue) here — that is always positive
-    # regardless of whether the rate covers costs.
-    _fb_base_rate = _safe_float(result.get("base_cost_rate"), 0.0)
-    _fb_volume = _safe_float(result.get("total_volume"), 0.0)
-    _fb_min_fee = _safe_float(result.get("minimum_fee"), 0.0)
-    _fb_txn_count = _safe_float(result.get("transaction_count"), 0.0)
-    fallback_profit = (recommended_rate - _fb_base_rate) * _fb_volume + _fb_min_fee * _fb_txn_count
-
+    fallback_profit = _safe_float(result.get("estimated_total_fees"), 0.0)
     if summary_profitability_pct is None:
+        base_rate = _safe_float(result.get("base_cost_rate"), 0.0)
+        total_volume = _safe_float(result.get("total_volume"), 0.0)
         total_fees = _safe_float(result.get("estimated_total_fees"), 0.0)
+        fallback_profitability = (recommended_rate - base_rate) * total_volume
+        fallback_profitability += _safe_float(result.get("minimum_fee"), 0.0) * _safe_float(result.get("transaction_count"), 0.0)
         if total_fees > 0:
-            summary_profitability_pct = max(-100.0, min(100.0, (fallback_profit / total_fees) * 100.0))
+            summary_profitability_pct = max(-100.0, min(100.0, (fallback_profitability / total_fees) * 100.0))
+
+    if (
+        estimated_profit_max is not None
+        and fallback_profit > 0
+        and estimated_profit_max < (0.05 * fallback_profit)
+    ):
+        # Guardrail: if forecast-based profit is orders of magnitude below the
+        # deterministic fee baseline, keep results on a realistic business scale.
+        estimated_profit_min = fallback_profit * 0.75
+        estimated_profit_max = fallback_profit * 1.25
 
     base_rate_for_summary = _safe_float(result.get("base_cost_rate"), _base_rate_for_mcc(mcc_int))
     margin_rate_for_summary = recommended_rate - base_rate_for_summary
-
-    # Compute normalised monthly volume for display (Expected Annual Volume, etc.).
-    # total_volume may span years of historical data; dividing by the actual date
-    # range gives a realistic per-month figure.
-    _tv = _safe_float(result.get("total_volume"), 0.0)
-    _hist_months_summary = 1.0
-    if tx_summary.get("start_date") and tx_summary.get("end_date"):
-        try:
-            from datetime import date as _date2
-            _d0s = _date2.fromisoformat(str(tx_summary["start_date"])[:10])
-            _d1s = _date2.fromisoformat(str(tx_summary["end_date"])[:10])
-            _hist_months_summary = max(1.0, (_d1s - _d0s).days / 30.44)
-        except Exception:
-            pass
-    monthly_volume = _tv / _hist_months_summary
-    tx_summary["monthly_volume"] = round(monthly_volume, 2)
-
-    # Extract the MC probability at the suggested rate for the summary display.
-    # This ensures "% of profitability" matches the chart's value at that rate.
-    mc_probability_at_suggested = None
-    recommended_rate_pct_rounded = round(recommended_rate * 100.0, 2)
-    for pt in profitability_curve:
-        if isinstance(pt, dict) and round(_safe_float(pt.get("rate_pct"), -1), 2) == recommended_rate_pct_rounded:
-            mc_probability_at_suggested = _safe_float(pt.get("probability_pct"), None)
-            break
-
-    # Use MC probability when available, otherwise fall back to margin-based profitability
-    display_profitability_pct = (
-        mc_probability_at_suggested
-        if mc_probability_at_suggested is not None
-        else (round(summary_profitability_pct, 2) if summary_profitability_pct is not None else None)
-    )
-
     summary = {
         "suggested_rate_pct": round(recommended_rate * 100.0, 2),
         "margin_bps": int(round(margin_rate_for_summary * 10000.0)),
         "estimated_profit_min": round(estimated_profit_min if estimated_profit_min is not None else fallback_profit, 2),
         "estimated_profit_max": round(estimated_profit_max if estimated_profit_max is not None else fallback_profit, 2),
-        "profitability_pct": display_profitability_pct,
+        "profitability_pct": round(summary_profitability_pct, 2) if summary_profitability_pct is not None else None,
     }
 
     return {

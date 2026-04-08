@@ -31,11 +31,11 @@ from modules.cost_forecast.controller import get_cost_forecast_health, run_cost_
 from modules.cost_forecast.models import CostForecastRequest, ContextMonth
 from modules.knn_rate_quote.controller import run_get_composite_merchant, run_get_quote, run_knn_rate_quote
 from modules.knn_rate_quote.schemas import CompositeMerchantRequest, QuoteRequest
-from modules.profit_forecast.controller import run_profit_forecast_async
-from modules.profit_forecast.models import ProfitForecastRequest as ProfitForecastReq
+from modules.profit_forecast.controller import run_profit_forecast
+from modules.profit_forecast.models import ProfitForecastRequest
 from modules.rate_optimisation.controller import run_rate_optimisation
-from modules.tpv_forecast.models import TpvContextMonth, TpvForecastRequest
-from modules.tpv_forecast.service import run_tpv_forecast
+from modules.tpv_forecast.controller import run_tpv_forecast
+from modules.tpv_forecast.models import TPVForecastRequest
 from modules.tpv_prediction.controller import run_tpv_prediction
 from modules.volume_forecast.controller import run_volume_forecast
 from modules.volume_forecast.models import VolumeForecastRequest
@@ -469,9 +469,7 @@ async def get_cost_forecast_endpoint(request: Request):
 
         m9_result = await run_cost_forecast(m9_request)
 
-        # If the caller used the legacy pipeline format, translate field names
-        if is_legacy:
-            return _m9_response_to_legacy(m9_result)
+        # Return monthly forecast directly (3 months, no weekly expansion)
         return m9_result
     except Exception as exc:
         # If M9 is in degraded mode, fall back to KNN-neighbour-mean cost estimate
@@ -487,7 +485,7 @@ async def get_cost_forecast_endpoint(request: Request):
 _WEEKS_PER_MONTH = 52.0 / 12.0  # ≈ 4.333
 
 
-def _weekly_features_to_tpv_request(body: dict) -> TpvForecastRequest:
+def _weekly_features_to_tpv_request(body: dict) -> dict:
     """
     Convert legacy weekly-features payload → TpvForecastRequest (monthly context).
 
@@ -522,116 +520,45 @@ def _weekly_features_to_tpv_request(body: dict) -> TpvForecastRequest:
         avg_txn_val = sum(w.get("weekly_avg_txn_value_mean", 0.0) for w in weeks) / n
         std_txn = (sum(w.get("weekly_avg_txn_value_stdev", 0.0) ** 2 for w in weeks) / n) ** 0.5
 
-        context_months.append(TpvContextMonth(
-            year=year,
-            month=month,
-            total_payment_volume=monthly_tpv,
-            transaction_count=monthly_tc,
-            avg_transaction_value=avg_txn_val,
-            std_txn_amount=std_txn,
-        ))
+        context_months.append({
+            "year": year,
+            "month": month,
+            "total_payment_volume": monthly_tpv,
+            "transaction_count": monthly_tc,
+            "avg_transaction_value": avg_txn_val,
+            "std_txn_amount": std_txn,
+        })
 
     if len(context_months) > 6:
         context_months = context_months[-6:]
 
-    import numpy as np
-    log_means = [math.log1p(cm.total_payment_volume) for cm in context_months]
-    pool_log_mean = float(np.mean(log_means)) if log_means else 0.0
-
-    return TpvForecastRequest(
-        context_months=context_months,
-        pool_log_mean_at_context_end=pool_log_mean,
-        knn_pool_log_mean_at_context_end=pool_log_mean,
-        mcc=mcc,
-    )
-
-
-def _tpv_response_to_legacy(tpv_resp: dict) -> dict:
-    """
-    Translate monthly TPV forecast → 12-week legacy format (matches ForecastWeek schema).
-
-    Each monthly forecast is expanded into 4 weekly points via linear
-    interpolation, keeping the same shape the frontend and backend expect
-    from historical /GetVolumeForecast.
-    """
-    monthly = sorted(
-        tpv_resp.get("forecast", []),
-        key=lambda fm: fm.get("month_index", 0),
-    )
-
-    weekly_forecast = []
-    week_idx = 1
-    for i, fm in enumerate(monthly):
-        mid = fm.get("total_proc_value_mid", 0.0)
-        lo  = fm.get("total_proc_value_ci_lower", 0.0)
-        hi  = fm.get("total_proc_value_ci_upper", 0.0)
-
-        if i + 1 < len(monthly):
-            nm = monthly[i + 1]
-            n_mid, n_lo, n_hi = (nm["total_proc_value_mid"],
-                                  nm["total_proc_value_ci_lower"],
-                                  nm["total_proc_value_ci_upper"])
-        else:
-            n_mid, n_lo, n_hi = mid, lo, hi
-
-        for w in range(4):
-            t = w / 4.0
-            weekly_forecast.append({
-                "forecast_week_index":     week_idx,
-                "total_proc_value_mid":    mid + t * (n_mid - mid),
-                "total_proc_value_ci_lower": lo + t * (n_lo - lo),
-                "total_proc_value_ci_upper": hi + t * (n_hi - hi),
+    # Return onboarding_merchant_txn_df compatible with the new TPVForecastRequest
+    # by flattening the monthly buckets into synthetic transaction rows.
+    synthetic_rows = []
+    for cm in context_months:
+        for _ in range(cm["transaction_count"]):
+            synthetic_rows.append({
+                "transaction_date": f"{cm['year']}-{cm['month']:02d}-15",
+                "amount": round(cm["avg_transaction_value"], 2),
             })
-            week_idx += 1
 
-    return {
-        "forecast": weekly_forecast,
-        "conformal_metadata": tpv_resp.get("conformal_metadata"),
-        "process_metadata":   tpv_resp.get("process_metadata"),
-    }
+    return {"onboarding_merchant_txn_df": synthetic_rows, "mcc": mcc}
 
 
-@router.post("/GetTPVForecast", tags=["TPV Forecast Service (Huber v2)"])
-async def get_tpv_forecast_endpoint(request: Request):
+@router.post("/GetTPVForecast", tags=["TPV Forecast Service (v2)"])
+async def get_tpv_forecast_endpoint(payload: TPVForecastRequest):
     """
-    Huber-based monthly TPV (Total Payment Volume) forecast.
+    Monthly TPV forecast with conformal prediction intervals.
 
-    Accepts BOTH:
-      • Native TpvForecastRequest format
-      • Legacy weekly-features pipeline format (composite_weekly_features, mcc)
-
-    Falls back to SARIMA-based volume forecast when no TPV artifacts are
-    available for the requested MCC (e.g. non-5411 merchants).
+    Accepts raw transaction records and produces a 1–3 month forecast.
+    When trained artifacts are available, uses HuberRegressor in log-space
+    with dollar-space conformal intervals. Falls back to simple
+    extrapolation when artifacts are not yet trained.
     """
-    body = await request.json()
-    is_legacy = "composite_weekly_features" in body
-
     try:
-        if is_legacy:
-            tpv_request = _weekly_features_to_tpv_request(body)
-        else:
-            tpv_request = TpvForecastRequest(**body)
-
-        result = run_tpv_forecast(tpv_request)
-
-        if is_legacy:
-            return _tpv_response_to_legacy(result)
-        return result
-
-    except Exception as tpv_exc:
-        # Graceful fallback: MCC has no TPV artifacts → use legacy SARIMA volume forecast
-        logger.warning(
-            "TPV Huber forecast failed (%s); falling back to SARIMA volume forecast.",
-            tpv_exc,
-        )
-        if is_legacy:
-            try:
-                from modules.volume_forecast.models import VolumeForecastRequest as VFR
-                vf_payload = VFR(**body)
-                return run_volume_forecast(vf_payload)
-            except Exception as sarima_exc:
-                raise HTTPException(status_code=400, detail=str(sarima_exc))
-        raise HTTPException(status_code=400, detail=str(tpv_exc))
+        return run_tpv_forecast(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/GetVolumeForecast", tags=["Volume Forecast Service"])
@@ -643,17 +570,15 @@ async def get_volume_forecast_endpoint(payload: VolumeForecastRequest):
 
 
 @router.post("/GetProfitForecast", tags=["Profit Forecast Service (Monte Carlo)"])
-async def get_profit_forecast_endpoint(payload: ProfitForecastReq):
+async def get_profit_forecast_endpoint(payload: ProfitForecastRequest):
     """
-    Monte Carlo profit forecast.
+    Monte Carlo profit simulation.
 
-    Accepts pre-computed cost and volume forecast outputs, runs independent
-    Monte Carlo simulation to derive profit distribution and profitability curve.
+    Accepts pre-computed TPV and cost forecast outputs, runs independent
+    Monte Carlo sampling, and returns per-month profit distributions
+    with summary statistics (break-even rate, suggested fee, etc.).
     """
     try:
-        result = run_profit_forecast_async(payload)
-        if hasattr(result, "__await__"):
-            result = await result
-        return result
+        return run_profit_forecast(payload)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))

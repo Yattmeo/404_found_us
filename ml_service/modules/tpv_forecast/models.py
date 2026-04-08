@@ -1,66 +1,81 @@
 """
-Pydantic models for the Huber-based TPV (Total Payment Volume) forecast service.
+models.py — Pydantic request/response models for GetTPVForecast (v2).
 
-Mirrors the M9 cost forecast model structure but targets monthly TPV in dollars,
-trained in log1p-space with conformal intervals calibrated in dollar space.
+Adapted for embedding inside ml_service.
 """
+
 from __future__ import annotations
 
-from typing import List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-
-# ── Request ────────────────────────────────────────────────────────────────
-
-class TpvContextMonth(BaseModel):
-    year: int
-    month: int = Field(..., ge=1, le=12)
-    total_payment_volume: float        # Monthly TPV in dollars
-    transaction_count: int = 1
-    avg_transaction_value: float = 0.0
-    std_txn_amount: float = 0.0
-    median_txn_amount: Optional[float] = None  # defaults to avg_transaction_value when None
+from .config import HORIZON_LEN, TARGET_COV
 
 
-class TpvForecastRequest(BaseModel):
-    context_months: List[TpvContextMonth]
-    # log1p-space pool means of KNN peers (use context mean when unknown)
-    pool_log_mean_at_context_end: float = 0.0
-    knn_pool_log_mean_at_context_end: float = 0.0
-    mcc: int
-    horizon_months: int = 3
-    confidence_interval: float = 0.90
+# ---------------------------------------------------------------------------
+# Request
+# ---------------------------------------------------------------------------
+
+class TPVForecastRequest(BaseModel):
+    onboarding_merchant_txn_df: List[Dict[str, Any]] = Field(
+        ..., min_length=1,
+        description="Raw transaction records (transaction_date, amount required; cost_type_ID, card_type optional).",
+    )
+    mcc: int = Field(..., description="Merchant category code.")
+    merchant_id: Optional[str] = Field(default=None)
+    horizon_months: int = Field(default=HORIZON_LEN, ge=1, le=HORIZON_LEN)
+    confidence_interval: float = Field(default=TARGET_COV, gt=0.0, lt=1.0)
+    card_types: List[str] = Field(
+        default_factory=lambda: ["both"],
+        description="Card filters for reference pool.",
+    )
+
+    @field_validator("card_types")
+    @classmethod
+    def validate_card_types(cls, value: List[str]) -> List[str]:
+        if not value:
+            return ["both"]
+        normalized = [str(v).strip().lower() for v in value if str(v).strip()]
+        return normalized or ["both"]
 
 
-# ── Response ───────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Response
+# ---------------------------------------------------------------------------
 
-class TpvForecastMonth(BaseModel):
+class ForecastMonth(BaseModel):
     month_index: int
-    total_proc_value_mid: float
-    total_proc_value_ci_lower: float
-    total_proc_value_ci_upper: float
+    tpv_mid: float
+    tpv_ci_lower: float
+    tpv_ci_upper: float
 
 
-class TpvConformalMetadata(BaseModel):
+class ConformalMetadata(BaseModel):
     half_width_dollars: float
     conformal_mode: str
     pool_size: int
     risk_score: Optional[float] = None
+    strat_scheme: Optional[str] = None
 
 
-class TpvProcessMetadata(BaseModel):
+class ProcessMetadata(BaseModel):
     context_len_used: int
     context_mean_log_tpv: float
+    context_mean_dollar: float
+    momentum: float
+    pool_mean_used: float
     mcc: int
-    model_variant: str = "tpv_v2"
+    model_variant: str = "tpv_v1"
     horizon_months: int
     confidence_interval: float
-    generated_at_utc: str
-    artifact_trained_at: str
+    generated_at_utc: datetime
+    artifact_trained_at: Optional[str] = None
+    strat_enabled: bool = False
 
 
-class TpvForecastResponse(BaseModel):
-    forecast: List[TpvForecastMonth]
-    conformal_metadata: TpvConformalMetadata
-    process_metadata: TpvProcessMetadata
+class TPVForecastResponse(BaseModel):
+    forecast: List[ForecastMonth]
+    conformal_metadata: ConformalMetadata
+    process_metadata: ProcessMetadata

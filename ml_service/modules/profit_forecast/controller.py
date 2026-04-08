@@ -1,7 +1,11 @@
-"""Controller for the profit forecast module."""
+"""Controller for the GetProfitForecast module."""
+
+from __future__ import annotations
+
 from .models import ProfitForecastRequest, ProfitForecastResponse
-from .service import run_profit_forecast
+from .service import get_profit_forecast
 
 
-async def run_profit_forecast_async(req: ProfitForecastRequest) -> ProfitForecastResponse:
-    return run_profit_forecast(req)
+def run_profit_forecast(req: ProfitForecastRequest) -> dict:
+    result: ProfitForecastResponse = get_profit_forecast(req)
+    return result.model_dump()

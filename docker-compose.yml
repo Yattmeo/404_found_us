@@ -83,9 +83,13 @@
     container_name: ml-service
     environment:
       - DATABASE_URL=postgresql://pguser:pgpassword@postgres:5432/mldb
+      - M9_ARTIFACTS_BASE_PATH=/app/artifacts/m9
+      - TPV_ARTIFACTS_BASE_PATH=/app/artifacts/tpv
     volumes:
       - ./ml_service:/app
       - "./KNN Demo Service/KNN Demo Service:/data/knn_source:ro"
+      - "./ml_pipeline/Matt_EDA/services/GetAvgProcCostForecast Service v2/artifacts:/app/artifacts/m9:ro"
+      - "./ml_pipeline/Matt_EDA/services/GetTPVForecast Service v2/artifacts:/app/artifacts/tpv:ro"
     depends_on:
       - postgres
     restart: unless-stopped

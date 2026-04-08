@@ -137,14 +137,13 @@ class MerchantQuoteService:
         onboarding_rows: list[dict],
         base_cost_rate: float | None = None,
         fee_rate: float | None = None,
-        rate_grid_pct: list[float] | None = None,
     ) -> dict | None:
         if not onboarding_rows:
             return None
 
         composite_payload = None
         cost_payload = None
-        volume_payload = None
+        tpv_payload = None
         profit_payload = None
 
         try:
@@ -164,6 +163,7 @@ class MerchantQuoteService:
                 if not weekly_features:
                     return None
 
+                # 1. Cost forecast (M9 HuberRegressor — returns 12 weekly items)
                 try:
                     cost_body = {
                         "composite_weekly_features": weekly_features,
@@ -181,37 +181,59 @@ class MerchantQuoteService:
                 except Exception as exc:
                     logger.warning("Cost forecast step failed (non-fatal): %s", exc)
 
+                # 2. TPV forecast (HuberRegressor in log-space — replaces SARIMA)
                 try:
-                    volume_resp = client.post(
+                    tpv_resp = client.post(
                         f"{_ML_SERVICE_URL}/ml/GetTPVForecast",
                         json={
-                            "composite_weekly_features": weekly_features,
                             "onboarding_merchant_txn_df": onboarding_rows,
                             "mcc": mcc,
+                            "card_types": card_types,
                         },
                     )
-                    volume_resp.raise_for_status()
-                    volume_payload = volume_resp.json()
+                    tpv_resp.raise_for_status()
+                    tpv_payload = tpv_resp.json()
                 except Exception as exc:
-                    logger.warning("Volume forecast step failed (non-fatal): %s", exc)
+                    logger.warning("TPV forecast step failed (non-fatal): %s", exc)
 
-                # Monte Carlo profit forecast (requires both cost + volume)
-                if cost_payload and volume_payload and fee_rate is not None:
+                # 3. Monte Carlo profit forecast — cost forecast now returns monthly directly
+                if cost_payload is not None and tpv_payload is not None and fee_rate is not None:
                     try:
-                        profit_body = {
-                            "cost_service_output": cost_payload,
-                            "volume_service_output": volume_payload,
-                            "fee_rate": fee_rate,
-                            "mcc": mcc,
-                        }
-                        if rate_grid_pct:
-                            profit_body["rate_grid_pct"] = rate_grid_pct
-                        profit_resp = client.post(
-                            f"{_ML_SERVICE_URL}/ml/GetProfitForecast",
-                            json=profit_body,
-                        )
-                        profit_resp.raise_for_status()
-                        profit_payload = profit_resp.json()
+                        monthly_cost = [
+                            {
+                                "month_index": item.get("month_index", i + 1),
+                                "proc_cost_pct_mid": item.get("proc_cost_pct_mid", 0.0),
+                                "proc_cost_pct_ci_lower": item.get("proc_cost_pct_ci_lower", 0.0),
+                                "proc_cost_pct_ci_upper": item.get("proc_cost_pct_ci_upper", 0.0),
+                            }
+                            for i, item in enumerate(cost_payload.get("forecast", []))
+                        ]
+
+                        if monthly_cost:
+                            half_width_cost = (
+                                monthly_cost[0]["proc_cost_pct_ci_upper"]
+                                - monthly_cost[0]["proc_cost_pct_ci_lower"]
+                            ) / 2.0
+
+                            profit_resp = client.post(
+                                f"{_ML_SERVICE_URL}/ml/GetProfitForecast",
+                                json={
+                                    "tpv_service_output": tpv_payload,
+                                    "cost_service_output": {
+                                        "forecast": monthly_cost,
+                                        "conformal_metadata": {
+                                            "half_width": max(half_width_cost, 0.0001),
+                                            "conformal_mode": (
+                                                cost_payload.get("conformal_metadata") or {}
+                                            ).get("conformal_mode", "weekly_derived"),
+                                        },
+                                    },
+                                    "fee_rate": fee_rate,
+                                    "mcc": mcc,
+                                },
+                            )
+                            profit_resp.raise_for_status()
+                            profit_payload = profit_resp.json()
                     except Exception as exc:
                         logger.warning("Profit forecast step failed (non-fatal): %s", exc)
 
@@ -219,13 +241,13 @@ class MerchantQuoteService:
             logger.warning("ML insights pipeline failed: %s", exc)
             return None
 
-        if cost_payload is None and volume_payload is None:
+        if cost_payload is None and tpv_payload is None:
             return None
 
         return {
             "composite": composite_payload,
             "cost": cost_payload,
-            "volume": volume_payload,
+            "tpv": tpv_payload,
             "profit": profit_payload,
         }
 
@@ -308,7 +330,7 @@ class MerchantQuoteService:
 
         composite_payload = pipeline["composite"]
         cost_payload = pipeline.get("cost") or {}
-        volume_payload = pipeline.get("volume") or {}
+        tpv_payload = pipeline.get("tpv") or {}
 
         cost_week1 = None
         if cost_payload.get("forecast"):
@@ -320,12 +342,12 @@ class MerchantQuoteService:
             )
 
         volume_week1 = None
-        if volume_payload.get("forecast"):
-            first = volume_payload["forecast"][0]
+        if tpv_payload.get("forecast"):
+            first = tpv_payload["forecast"][0]
             volume_week1 = MLForecastBand(
-                mid=float(first.get("total_proc_value_mid", 0.0)),
-                lower=float(first.get("total_proc_value_ci_lower", 0.0)),
-                upper=float(first.get("total_proc_value_ci_upper", 0.0)),
+                mid=float(first.get("tpv_mid", 0.0)),
+                lower=float(first.get("tpv_ci_lower", 0.0)),
+                upper=float(first.get("tpv_ci_upper", 0.0)),
             )
 
         return MerchantQuoteInsights(

@@ -49,44 +49,17 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
     return fallback;
   };
 
-  const toMonthlyCostSeries = (series) => (Array.isArray(series) ? series : []).map((point, index) => {
-    const label = String(point?.label || '');
-    // If backend already provides a monthly label (e.g. "Apr 2026"), use it
-    if (label && !label.startsWith('W')) {
-      return {
-        date: new Date(),
-        label,
-        p5: Number(point.lower || 0) * 100,
-        p95: Number(point.upper || 0) * 100,
-        median: Number(point.mid || 0) * 100,
-      };
-    }
-    // Fallback: extract date and format as month
-    const date = extractDateFromPoint(point, index);
-    return {
-      date,
-      label: formatMonthYear(date),
-      p5: Number(point.lower || 0) * 100,
-      p95: Number(point.upper || 0) * 100,
-      median: Number(point.mid || 0) * 100,
-    };
-  });
+  const toMonthlyCostSeries = (series) => (Array.isArray(series) ? series : []).map((point, index) => ({
+    label: point.label || `Month ${point.month_index || index + 1}`,
+    p5: Number(point.lower || 0) * 100,
+    p95: Number(point.upper || 0) * 100,
+    median: Number(point.mid || 0) * 100,
+  }));
 
-  const toMonthlyVolumeSeries = (series) => (Array.isArray(series) ? series : []).map((point, index) => {
-    const label = String(point?.label || '');
-    if (label && !label.startsWith('W')) {
-      return { date: new Date(), label, value: Number(point.mid || 0) };
-    }
-    const monthOffset = (Number(point?.month_index) || index + 1) - 1;
-    const date = new Date();
-    date.setDate(1);
-    date.setMonth(date.getMonth() + monthOffset);
-    return {
-      date,
-      label: formatMonthYear(date),
-      value: Number(point.mid || 0),
-    };
-  });
+  const toMonthlyVolumeSeries = (series) => (Array.isArray(series) ? series : []).map((point, index) => ({
+    label: point.label || `Month ${point.month_index || index + 1}`,
+    value: Number(point.mid || 0),
+  }));
 
   const buildYearCaption = (dates, fallbackStart, fallbackEnd) => {
     const validDates = (dates || []).filter((d) => d instanceof Date && !Number.isNaN(d.getTime()));
@@ -108,15 +81,13 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
     return '';
   };
 
-  const buildSmoothPath = (coords, yMin = -Infinity, yMax = Infinity) => {
+  const buildSmoothPath = (coords) => {
     if (coords.length === 0) {
       return '';
     }
     if (coords.length === 1) {
       return `M ${coords[0].x} ${coords[0].y}`;
     }
-
-    const clampY = (y) => Math.min(yMax, Math.max(yMin, y));
 
     let path = `M ${coords[0].x} ${coords[0].y}`;
     for (let i = 0; i < coords.length - 1; i += 1) {
@@ -126,9 +97,9 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
       const p3 = coords[i + 2] || p2;
 
       const cp1x = p1.x + (p2.x - p0.x) / 6;
-      const cp1y = clampY(p1.y + (p2.y - p0.y) / 6);
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
       const cp2x = p2.x - (p3.x - p1.x) / 6;
-      const cp2y = clampY(p2.y - (p3.y - p1.y) / 6);
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
       path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
     }
     return path;
@@ -371,7 +342,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
               />
             ) : null}
 
-            <path d={useSmooth ? buildSmoothPath(coords, top, top + usableH) : straightPath} fill="none" stroke="#F97316" strokeWidth="3" />
+            <path d={useSmooth ? buildSmoothPath(coords) : straightPath} fill="none" stroke="#F97316" strokeWidth="3" />
             {coords.map((c, idx) => (
               <g key={`dot-${idx}`} onMouseEnter={() => setHoveredIndex(idx)} onMouseLeave={() => setHoveredIndex(null)}>
                 <circle cx={c.x} cy={c.y} r="4.5" fill="#F97316" />
@@ -423,17 +394,8 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
   const suggestedRate = results.suggestedRate;
   const marginBps = results.marginBps;
-  const getProfitBoundClass = (value) => {
-    const n = Number(value);
-    if (n < 0) return 'text-red-600';
-    if (n === 0) return 'text-gray-400';
-    return 'text-[#17a455]';
-  };
-  const estimatedProfitMin = results.estimatedProfitMin;
-  const estimatedProfitMax = results.estimatedProfitMax;
-  const hasEstimatedProfitRange =
-    estimatedProfitMin !== null && estimatedProfitMin !== undefined &&
-    estimatedProfitMax !== null && estimatedProfitMax !== undefined;
+  const isEstimatedProfitNegative = Number(results.estimatedProfitMin || 0) < 0;
+  const estimatedProfitRange = formatCurrencyRange(results.estimatedProfitMin, results.estimatedProfitMax);
 
   const costSeries = toMonthlyCostSeries(results.costForecast || []);
 
@@ -441,12 +403,13 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
   const profitabilitySeries = (results.profitabilityCurve || []).map((point) => ({
     label: `${point.rate_pct}`,
-    value: Math.max(0, Math.min(100, Number(point.probability_pct || 0))),
+    // Keep the chart intuitive: approach 100% but never touch it.
+    value: Math.max(0, Math.min(99.5, Number(point.probability_pct || 0))),
   }));
 
   const transactionSummary = results.transactionSummary || null;
   const timeAxisCaption = buildYearCaption(
-    [...costSeries.map((p) => p.date), ...volumeSeries.map((p) => p.date)],
+    [],
     transactionSummary?.start_date,
     transactionSummary?.end_date,
   );
@@ -483,7 +446,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
             <p className="text-sm font-medium text-gray-700 mb-2">Margin (in bps):</p>
-            <p className={`text-4xl font-bold ${Number(marginBps) < 0 ? 'text-red-600' : 'text-gray-900'}`}>
+            <p className="text-4xl font-bold text-gray-900">
               {marginBps !== null && marginBps !== undefined
                 ? `${marginBps}`
                 : <span className="text-xl text-gray-400">Pending backend calculation</span>}
@@ -492,19 +455,11 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
             <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
-            {hasEstimatedProfitRange ? (
-              <p className="text-4xl font-bold">
-                <span className={getProfitBoundClass(estimatedProfitMin)}>
-                  {formatCurrency(Math.min(Number(estimatedProfitMin), Number(estimatedProfitMax)))}
-                </span>
-                <span className="text-gray-900"> - </span>
-                <span className={getProfitBoundClass(estimatedProfitMax)}>
-                  {formatCurrency(Math.max(Number(estimatedProfitMin), Number(estimatedProfitMax)))}
-                </span>
-              </p>
-            ) : (
-              <span className="text-xl text-gray-400">Pending backend calculation</span>
-            )}
+            <p className={`text-4xl font-bold ${isEstimatedProfitNegative ? 'text-red-600' : 'text-[#17a455]'}`}>
+              {estimatedProfitRange
+                ? estimatedProfitRange
+                : <span className="text-xl text-gray-400">Pending backend calculation</span>}
+            </p>
           </div>
 
           <button

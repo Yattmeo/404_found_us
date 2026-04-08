@@ -1,60 +1,97 @@
-"""Pydantic models for the in-process Monte Carlo profit forecast module."""
+"""
+models.py — Pydantic request/response models for the GetProfitForecast module.
+"""
+
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from .config import DEFAULT_CONFIDENCE_INTERVAL, DEFAULT_N_SIMULATIONS, HORIZON_LEN
 
-# ── Upstream service output shapes (extras ignored) ───────────────────────
 
-class CostForecastMonthInput(BaseModel, extra="ignore"):
-    month_index: int = 0
+# ---------------------------------------------------------------------------
+# Upstream service output models (accept the JSON responses as-is)
+# ---------------------------------------------------------------------------
+
+class TPVForecastMonth(BaseModel, extra="ignore"):
+    month_index: int
+    tpv_mid: float
+    tpv_ci_lower: Optional[float] = None
+    tpv_ci_upper: Optional[float] = None
+
+
+class TPVConformalMetadata(BaseModel, extra="ignore"):
+    half_width_dollars: float
+    conformal_mode: str = "unknown"
+
+
+class TPVProcessMetadata(BaseModel, extra="ignore"):
+    context_len_used: int = 0
+
+
+class TPVServiceOutput(BaseModel, extra="ignore"):
+    forecast: List[TPVForecastMonth]
+    conformal_metadata: TPVConformalMetadata
+    process_metadata: TPVProcessMetadata = TPVProcessMetadata()
+
+
+class CostForecastMonth(BaseModel, extra="ignore"):
+    month_index: int
     proc_cost_pct_mid: float
     proc_cost_pct_ci_lower: Optional[float] = None
     proc_cost_pct_ci_upper: Optional[float] = None
 
 
-class CostConformalInput(BaseModel, extra="ignore"):
-    half_width: float = 0.005
+class CostConformalMetadata(BaseModel, extra="ignore"):
+    half_width: float
     conformal_mode: str = "unknown"
 
 
-class CostProcessInput(BaseModel, extra="ignore"):
+class CostProcessMetadata(BaseModel, extra="ignore"):
     context_len_used: int = 0
 
 
-class CostServiceInput(BaseModel, extra="ignore"):
-    forecast: List[CostForecastMonthInput]
-    conformal_metadata: Optional[CostConformalInput] = None
-    process_metadata: Optional[CostProcessInput] = None
+class CostServiceOutput(BaseModel, extra="ignore"):
+    forecast: List[CostForecastMonth]
+    conformal_metadata: CostConformalMetadata
+    process_metadata: CostProcessMetadata = CostProcessMetadata()
 
 
-class VolumeForecastWeekInput(BaseModel, extra="ignore"):
-    forecast_week_index: int = 0
-    total_proc_value_mid: float
-    total_proc_value_ci_lower: Optional[float] = None
-    total_proc_value_ci_upper: Optional[float] = None
-
-
-class VolumeServiceInput(BaseModel, extra="ignore"):
-    forecast: List[VolumeForecastWeekInput]
-
-
-# ── Request ───────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Request
+# ---------------------------------------------------------------------------
 
 class ProfitForecastRequest(BaseModel):
-    cost_service_output: CostServiceInput
-    volume_service_output: VolumeServiceInput
-    fee_rate: float = Field(..., gt=0.0, lt=1.0)
-    mcc: int = 5411
-    confidence_interval: float = Field(default=0.90, gt=0.0, lt=1.0)
-    n_simulations: int = Field(default=10_000, ge=100, le=1_000_000)
-    target_margin: Optional[float] = None
-    rate_grid_pct: Optional[List[float]] = None
+    tpv_service_output: TPVServiceOutput = Field(
+        ..., description="Full JSON response from POST /GetTPVForecast.",
+    )
+    cost_service_output: CostServiceOutput = Field(
+        ..., description="Full JSON response from POST /GetM9MonthlyCostForecast.",
+    )
+    fee_rate: float = Field(
+        ..., gt=0.0, lt=1.0,
+        description="Merchant fee rate as a fraction of TPV (e.g. 0.029 = 2.9%).",
+    )
+    mcc: int = Field(..., description="Merchant category code.")
+    merchant_id: Optional[str] = Field(default=None)
+    confidence_interval: float = Field(
+        default=DEFAULT_CONFIDENCE_INTERVAL, gt=0.0, lt=1.0,
+    )
+    n_simulations: int = Field(
+        default=DEFAULT_N_SIMULATIONS, ge=100, le=1_000_000,
+    )
+    target_margin: Optional[float] = Field(
+        default=None,
+        description="Optional target profit margin (fee_rate − cost_pct).",
+    )
 
 
-# ── Response ──────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Response
+# ---------------------------------------------------------------------------
 
 class ProfitMonth(BaseModel):
     month_index: int
@@ -69,12 +106,8 @@ class ProfitMonth(BaseModel):
     profit_ci_upper: float
     profit_median: float
     profit_std: float
-
-
-class ProfitabilityCurvePoint(BaseModel):
-    rate_pct: float
-    probability_pct: float
-    profitability_pct: float = 0.0
+    simulation_mean: float
+    p_target_margin_met: Optional[float] = None
 
 
 class ProfitSummary(BaseModel):
@@ -84,11 +117,28 @@ class ProfitSummary(BaseModel):
     avg_p_profitable: float
     min_p_profitable: float
     break_even_fee_rate: float
-    estimated_profit_min: float
-    estimated_profit_max: float
-    profitability_curve: List[ProfitabilityCurvePoint]
+    suggested_fee_for_target: Optional[float] = None
+    avg_p_target_margin_met: Optional[float] = None
+    min_p_target_margin_met: Optional[float] = None
+
+
+class SimulationMetadata(BaseModel):
+    fee_rate: float
+    n_simulations: int
+    confidence_interval: float
+    mcc: int
+    merchant_id: Optional[str]
+    horizon_months: int
+    tpv_conformal_mode: str
+    cost_conformal_mode: str
+    tpv_context_len_used: int
+    cost_context_len_used: int
+    generated_at_utc: datetime
+    target_margin: Optional[float] = None
+    correlation_assumed: str = "independent"
 
 
 class ProfitForecastResponse(BaseModel):
     months: List[ProfitMonth]
     summary: ProfitSummary
+    metadata: SimulationMetadata

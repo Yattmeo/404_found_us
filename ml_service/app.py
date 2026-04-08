@@ -15,27 +15,46 @@ Individual engine endpoints (for direct testing / future use):
 """
 from __future__ import annotations
 
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from modules.m9_forecast.service import init_m9_cache, start_m9_watcher
-from modules.tpv_forecast.service import init_tpv_cache, start_tpv_watcher
 from routes import router
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create tables on startup
     init_db()
-    # Load M9 cost forecast artifacts and start hot-reload watcher
-    init_m9_cache()
-    start_m9_watcher()
-    # Load TPV Huber forecast artifacts and start hot-reload watcher
-    init_tpv_cache()
-    start_tpv_watcher()
+
+    # Initialize M9 cost forecast artifacts (graceful — warns if missing)
+    try:
+        from modules.cost_forecast.service import initialize as init_m9
+        init_m9()
+    except Exception as exc:
+        logger.warning("[M9Cost] Initialization skipped: %s", exc)
+
+    # Initialize TPV forecast artifacts (graceful — does not crash if missing)
+    try:
+        from modules.tpv_forecast.service import initialize as init_tpv, set_repository
+        from modules.tpv_forecast.repository import SQLAlchemyMerchantRepository
+
+        db_url = os.environ.get(
+            "DATABASE_URL",
+            "postgresql://pguser:pgpassword@postgres:5432/mldb",
+        )
+        repo = SQLAlchemyMerchantRepository(connection_string=db_url)
+        set_repository(repo)
+        init_tpv()
+    except Exception as exc:
+        logger.warning("[TPV] Initialization skipped: %s", exc)
+
     yield
 
 
