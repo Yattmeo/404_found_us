@@ -907,16 +907,30 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     fallback_profit = _safe_float(result.get("estimated_total_fees"), 0.0)
 
     # Deterministic profit from known inputs: margin × volume over the
-    # forecast horizon (3 months).  This is the ground-truth estimate
-    # that doesn't depend on the TPV forecast model.
+    # forecast horizon (3 months).
+    # When volume_series is available (from TPV forecast), use those
+    # monthly volumes — they represent the predicted monthly TPV.
+    # result["total_volume"] is the sum of ALL historical transactions
+    # which can span years and would wildly overstate monthly volume.
     _det_base = _safe_float(result.get("base_cost_rate"), 0.0)
-    _det_vol = _safe_float(result.get("total_volume"), 0.0)
     _det_margin = recommended_rate - _det_base
     _horizon_months = max(len(volume_series), 3) if volume_series else 3
-    _det_profit = _det_margin * _det_vol * _horizon_months
+
+    if volume_series:
+        _det_forecast_vol = sum(v["mid"] for v in volume_series)
+        _det_monthly_txn = (
+            _safe_float(result.get("transaction_count"), 0.0)
+            / max(_horizon_months, 1)
+        )
+    else:
+        _det_forecast_vol = _safe_float(result.get("total_volume"), 0.0) * _horizon_months
+        _det_monthly_txn = _safe_float(result.get("transaction_count"), 0.0)
+
+    _det_vol = _det_forecast_vol / _horizon_months if _horizon_months > 0 else 0.0
+    _det_profit = _det_margin * _det_forecast_vol
     _det_min_fee_contribution = (
         _safe_float(result.get("minimum_fee"), 0.0)
-        * _safe_float(result.get("transaction_count"), 0.0)
+        * _det_monthly_txn
         * _horizon_months
     )
     _det_profit += _det_min_fee_contribution

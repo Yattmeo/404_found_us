@@ -134,13 +134,20 @@ class MerchantQuoteService:
                 or datetime.now(timezone.utc).date().isoformat()
             )
 
+            raw_cost_type = tx.get("cost_type_ID") or tx.get("cost_type_id") or 1
+            try:
+                cost_type_id = int(float(raw_cost_type))
+            except (TypeError, ValueError):
+                cost_type_id = 1
+
+            row_card_type = tx.get("card_type") or card_type
             rows.append(
                 {
                     "transaction_date": str(transaction_date),
                     "amount": round(amount, 2),
                     "proc_cost": round(amount * safe_rate, 6),
-                    "cost_type_ID": int(tx.get("cost_type_ID") or tx.get("cost_type_id") or 1),
-                    "card_type": card_type,
+                    "cost_type_ID": cost_type_id,
+                    "card_type": row_card_type,
                 }
             )
 

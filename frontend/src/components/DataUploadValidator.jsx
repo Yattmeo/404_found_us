@@ -80,7 +80,7 @@ const DataUploadValidator = ({ onValidDataConfirmed, onMCCExtracted }) => {
 
       if (validation.errors.length === 0) {
         setPreviewData(validation.data || []);
-        setFullData(validation.summary || validation.data || []);
+        setFullData(validation.allRows || validation.data || []);
         const mccFromSummary = validation?.summary?.mcc ? String(validation.summary.mcc).trim() : '';
         const mccFromRows = Array.isArray(validation?.data) && validation.data.length > 0 && validation.data[0]?.mcc
           ? String(validation.data[0].mcc).trim()

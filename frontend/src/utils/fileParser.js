@@ -17,11 +17,12 @@ const normalizeCardType = (value) => {
   return '';
 };
 
-const buildSummaryResult = (errors, previewRows, summary) => ({
+const buildSummaryResult = (errors, previewRows, summary, allRows) => ({
   valid: errors.length === 0,
   data: previewRows,
   errors,
   summary,
+  allRows: allRows || previewRows,
 });
 
 const parseCSVSummaryMode = (text, requiredColumns, options = {}) => {
@@ -59,6 +60,7 @@ const parseCSVSummaryMode = (text, requiredColumns, options = {}) => {
 
   const errors = [];
   const previewRows = [];
+  const allRows = [];
   const summary = {
     totalTransactions: 0,
     totalAmount: 0,
@@ -134,6 +136,7 @@ const parseCSVSummaryMode = (text, requiredColumns, options = {}) => {
           summary.mcc = String(row['mcc']).trim();
         }
 
+        allRows.push(row);
         if (previewRows.length < previewLimit) {
           previewRows.push(row);
         }
@@ -161,7 +164,7 @@ const parseCSVSummaryMode = (text, requiredColumns, options = {}) => {
     summary.averageTicket = summary.totalAmount / summary.totalTransactions;
   }
 
-  return buildSummaryResult(errors, previewRows, summary);
+  return buildSummaryResult(errors, previewRows, summary, allRows);
 };
 
 /**

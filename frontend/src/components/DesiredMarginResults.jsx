@@ -534,7 +534,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                 points={volumeSeries}
                 yLabel="Volume ($)"
                 valueFormatter={(v) => `${Math.round(v).toLocaleString('en-US')}`}
-                useSmooth={false}
+                useSmooth={true}
                 tooltipLabel="Value"
                 yearCaption={timeAxisCaption}
               />

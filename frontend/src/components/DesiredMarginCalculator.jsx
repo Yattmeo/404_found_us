@@ -159,8 +159,19 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
       estimatedProfitMax = calculation.estimated_total_fees * 1.1;
     }
 
-    const processingVolume =
-      typeof transactionSummary.monthly_volume === 'number' && transactionSummary.monthly_volume > 0
+    // Prefer TPV forecast average monthly volume for display ("Expected Annual Volume").
+    // total_volume is the sum of ALL historical transactions which can span many years
+    // and would wildly overstate monthly volume when multiplied by 12.
+    const forecastMonthlyAvg = volumeForecast.length > 0
+      ? volumeForecast.reduce((s, p) => {
+          const mid = Number(p?.mid);
+          return Number.isFinite(mid) && mid > 0 ? s + mid : s;
+        }, 0) / volumeForecast.length
+      : 0;
+
+    const processingVolume = forecastMonthlyAvg > 0
+      ? forecastMonthlyAvg
+      : typeof transactionSummary.monthly_volume === 'number' && transactionSummary.monthly_volume > 0
         ? transactionSummary.monthly_volume
         : typeof transactionSummary.total_volume === 'number'
         ? transactionSummary.total_volume
@@ -268,13 +279,14 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
 
       const hasCurrentRate = data.currentRate !== '' && data.currentRate !== undefined;
 
+      // Send raw transaction rows so the ML service sees real variance
+      const rawTransactions = Array.isArray(transactionData) ? transactionData : [];
+
       const payload = {
         mcc: data.mcc,
-        average_transaction_value: avgTicket,
-        monthly_transactions: txCount,
         fixedFee: data.fixedFee === '' || data.fixedFee === undefined ? null : parseFloat(data.fixedFee),
         currentRate: data.currentRate === '' || data.currentRate === undefined ? null : parseFloat(data.currentRate),
-        transactions: [],
+        transactions: rawTransactions,
       };
 
       payload.fixed_fee = payload.fixedFee ?? 0.30;
@@ -290,14 +302,12 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
 
       const quotePayload = {
         mcc: data.mcc,
-        average_transaction_value: avgTicket,
-        monthly_transactions: txCount,
         fixed_fee:
           data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
             ? 0.0
             : payload.fixed_fee,
         desired_margin: desiredMarginValue,
-        transactions: [],
+        transactions: rawTransactions,
       };
 
       if (hasCurrentRate) {
@@ -319,11 +329,9 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
 
           const fallbackPayload = {
             mcc: data.mcc,
-            average_transaction_value: avgTicket,
-            monthly_transactions: txCount,
             fixed_fee: Number.isFinite(fixedFeeFallback) ? fixedFeeFallback : 0.0,
             current_rate: null,
-            transactions: [],
+            transactions: Array.isArray(transactionData) ? transactionData : [],
           };
 
           const fallbackApiResults = await merchantFeeAPI.calculateCurrentRates(fallbackPayload);
