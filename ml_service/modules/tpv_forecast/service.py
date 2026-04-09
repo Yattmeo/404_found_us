@@ -666,6 +666,20 @@ def get_tpv_forecast(req: TPVForecastRequest) -> TPVForecastResponse:
         dtype=float,
     )
 
+    # 6b. Sanity check — if model predictions diverge too far from the
+    #     merchant's actual context mean, the features are likely OOD
+    #     (e.g. synthetic uniform-amount rows).  Fall back to extrapolation
+    #     which is grounded in the real observed TPV.
+    _MAX_LOG_DEVIATION = 2.0          # ≈ 7× in dollar terms
+    max_abs_dev = float(np.max(np.abs(log_preds - c_mean)))
+    if max_abs_dev > _MAX_LOG_DEVIATION:
+        logger.warning(
+            "[TPV] Model predictions too far from context (max_dev=%.2f, "
+            "c_mean=%.2f, preds=%s) — using extrapolation fallback",
+            max_abs_dev, c_mean, log_preds.tolist(),
+        )
+        return _fallback_forecast(context_months, req)
+
     # 7. Back-transform to dollars
     dollar_preds = np.expm1(log_preds)
 

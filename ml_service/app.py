@@ -52,8 +52,11 @@ async def lifespan(app: FastAPI):
         repo = SQLAlchemyMerchantRepository(connection_string=db_url)
         set_repository(repo)
         init_tpv()
+        print("[TPV] Initialization complete", flush=True)
     except Exception as exc:
-        logger.warning("[TPV] Initialization skipped: %s", exc)
+        import traceback
+        print(f"[TPV] Initialization FAILED: {exc}", flush=True)
+        traceback.print_exc()
 
     yield
 

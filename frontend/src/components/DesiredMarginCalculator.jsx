@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { ArrowLeft, TrendingUp } from 'lucide-react';
-import ResultsPanel from './ResultsPanel';
+import DesiredMarginResults from './DesiredMarginResults';
 import DataUploadValidator from './DataUploadValidator';
 import ManualTransactionEntry from './ManualTransactionEntry';
 import MCCDropdown from './MCCDropdown';
@@ -362,7 +362,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
   };
 
   if (results) {
-    return <ResultsPanel results={results} hasCurrentRate={!!currentRate} onNewCalculation={handleNewCalculation} />;
+    return <DesiredMarginResults results={results} onNewCalculation={handleNewCalculation} />;
   }
 
   return (

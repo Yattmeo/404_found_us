@@ -87,11 +87,11 @@ class MerchantQuoteService:
         volume_scale = actual_weekly_txn_count / weekly_txn_count if weekly_txn_count > 0 else 1.0
         scaled_amount = round(avg_ticket * volume_scale, 2)
 
-        # Place 4 weeks into each of the 2 prior calendar months so that the
-        # ML aggregation sees 2 complete months (no partial-month boundary).
+        # Place 4 weeks into each of the 3 prior calendar months so that the
+        # ML aggregation sees 3 complete months (ctx_len=3 for best model accuracy).
         # All dates stay within their calendar month (1st, 8th, 15th, 22nd).
         month_dates = []
-        for offset in (2, 1):
+        for offset in (3, 2, 1):
             m = today.month - offset
             y = today.year + (m - 1) // 12
             m = ((m - 1) % 12) + 1

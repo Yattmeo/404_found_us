@@ -81,13 +81,20 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
     return '';
   };
 
-  const buildSmoothPath = (coords) => {
+  const buildSmoothPath = (coords, yMin = null, yMax = null) => {
     if (coords.length === 0) {
       return '';
     }
     if (coords.length === 1) {
       return `M ${coords[0].x} ${coords[0].y}`;
     }
+
+    const clampY = (y) => {
+      let v = y;
+      if (yMin !== null && v > yMin) v = yMin;
+      if (yMax !== null && v < yMax) v = yMax;
+      return v;
+    };
 
     let path = `M ${coords[0].x} ${coords[0].y}`;
     for (let i = 0; i < coords.length - 1; i += 1) {
@@ -97,9 +104,15 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
       const p3 = coords[i + 2] || p2;
 
       const cp1x = p1.x + (p2.x - p0.x) / 6;
-      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      let cp1y = p1.y + (p2.y - p0.y) / 6;
       const cp2x = p2.x - (p3.x - p1.x) / 6;
-      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      let cp2y = p2.y - (p3.y - p1.y) / 6;
+
+      if (yMin !== null || yMax !== null) {
+        cp1y = clampY(cp1y);
+        cp2y = clampY(cp2y);
+      }
+
       path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
     }
     return path;
@@ -393,7 +406,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
   };
 
   const suggestedRate = results.suggestedRate;
-  const marginBps = results.marginBps;
+  const marginBps = results.margin;
   const isEstimatedProfitNegative = Number(results.estimatedProfitMin || 0) < 0;
   const estimatedProfitRange = formatCurrencyRange(results.estimatedProfitMin, results.estimatedProfitMax);
 
@@ -401,11 +414,26 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
   const volumeSeries = toMonthlyVolumeSeries(results.volumeForecast || []);
 
-  const profitabilitySeries = (results.profitabilityCurve || []).map((point) => ({
-    label: `${point.rate_pct}`,
-    // Keep the chart intuitive: approach 100% but never touch it.
-    value: Math.max(0, Math.min(99.5, Number(point.probability_pct || 0))),
-  }));
+  const directCurvePoints = (() => {
+    if (!Array.isArray(results.profitabilityCurve) || results.profitabilityCurve.length === 0) {
+      return [];
+    }
+    const raw = results.profitabilityCurve
+      .map((point) => ({
+        x: Number(point?.rate_pct),
+        y: Math.max(0, Math.min(100, Number(point?.probability_pct || 0))),
+        label: String(point?.rate_pct),
+      }))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+      .sort((a, b) => a.x - b.x);
+
+    for (let i = 1; i < raw.length; i += 1) {
+      if (raw[i].y < raw[i - 1].y) {
+        raw[i].y = raw[i - 1].y;
+      }
+    }
+    return raw;
+  })();
 
   const transactionSummary = results.transactionSummary || null;
   const timeAxisCaption = buildYearCaption(
@@ -511,17 +539,100 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                 yearCaption={timeAxisCaption}
               />
 
-              <SingleCurveChart
-                title="Probability of Profitability"
-                points={profitabilitySeries}
-                yLabel="Probability (%)"
-                valueFormatter={(v) => `${Number(v).toFixed(0)}%`}
-                useSmooth={true}
-                tooltipLabel="Probability"
-                xLabel="Rate (%)"
-                yMinOverride={0}
-                yMaxOverride={100}
-              />
+              {(() => {
+                const chartPoints = directCurvePoints;
+                if (!chartPoints.length) {
+                  return (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-3">Probability of Profitability</h3>
+                      <p className="text-sm text-gray-500">No probability data available yet.</p>
+                    </div>
+                  );
+                }
+
+                const w = 560, h = 260, l = 46, r = 18, t = 18, b = 36;
+                const uw = w - l - r, uh = h - t - b;
+                const minX = Math.min(...chartPoints.map((p) => p.x));
+                const maxX = Math.max(...chartPoints.map((p) => p.x));
+                const spanX = Math.max(0.0001, maxX - minX);
+
+                const coords = chartPoints.map((p) => ({
+                  x: l + (uw * ((p.x - minX) / (spanX || 1))),
+                  y: t + ((100 - p.y) / 100) * uh,
+                  label: p.label,
+                  value: p.y,
+                }));
+
+                const xTicks = (() => {
+                  const rawStep = spanX / 8;
+                  const step = [0.1, 0.2, 0.25, 0.5, 1, 2].find((s) => s >= rawStep) || 2;
+                  const start = Math.floor(minX / step) * step;
+                  const end = Math.ceil(maxX / step) * step;
+                  const ticks = [];
+                  for (let v = start; v <= end + 1e-9; v += step) {
+                    if (v >= minX - 1e-9 && v <= maxX + 1e-9) {
+                      const rounded = Number(v.toFixed(4));
+                      ticks.push({ value: rounded, x: l + (uw * ((rounded - minX) / (spanX || 1))) });
+                    }
+                  }
+                  return ticks;
+                })();
+
+                const path = buildSmoothPath(coords, t + uh, t);
+
+                const markerRate = Number.isFinite(Number(suggestedRate)) ? Number(suggestedRate) : null;
+                const markerCoord = markerRate !== null && markerRate >= minX && markerRate <= maxX
+                  ? { x: l + (uw * ((markerRate - minX) / (spanX || 1))) }
+                  : null;
+                const markerLbl = markerRate !== null ? `Suggested ${markerRate.toFixed(2)}%` : null;
+                const markerAnchor = markerCoord
+                  ? (markerCoord.x > w - r - 56 ? 'end' : markerCoord.x < l + 56 ? 'start' : 'middle')
+                  : 'middle';
+                const markerTxtX = markerCoord
+                  ? (markerCoord.x > w - r - 56 ? markerCoord.x - 8 : markerCoord.x < l + 56 ? markerCoord.x + 8 : markerCoord.x)
+                  : 0;
+
+                return (
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 md:p-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Probability of Profitability</h3>
+                    <div className="w-full overflow-x-auto">
+                      <svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-[500px]" role="img" aria-label="Probability of Profitability">
+                        {[0, 1, 2, 3, 4].map((tick) => {
+                          const y = t + (uh * tick) / 4;
+                          return <line key={`pg-${tick}`} x1={l} y1={y} x2={w - r} y2={y} stroke="#E5E7EB" strokeWidth="1" />;
+                        })}
+                        <line x1={l} y1={t + uh} x2={w - r} y2={t + uh} stroke="#9CA3AF" strokeWidth="1.2" />
+                        <line x1={l} y1={t} x2={l} y2={t + uh} stroke="#9CA3AF" strokeWidth="1.2" />
+
+                        {markerCoord ? (
+                          <line x1={markerCoord.x} y1={t} x2={markerCoord.x} y2={t + uh} stroke="#0F766E" strokeWidth="1.5" strokeDasharray="6 4" />
+                        ) : null}
+
+                        <path d={path} fill="none" stroke="#F97316" strokeWidth="2.75" />
+                        {coords.map((c) => (
+                          <circle key={`p-${c.label}`} cx={c.x} cy={c.y} r="4" fill="#F97316" />
+                        ))}
+
+                        {markerCoord && markerLbl ? (
+                          <text x={markerTxtX} y={t - 4} textAnchor={markerAnchor} className="fill-teal-700 text-[11px] font-medium">{markerLbl}</text>
+                        ) : null}
+
+                        <text x={l - 8} y={t + 4} textAnchor="end" className="fill-gray-500 text-[11px]">100%</text>
+                        <text x={l - 8} y={t + uh + 4} textAnchor="end" className="fill-gray-500 text-[11px]">0%</text>
+
+                        {xTicks.map((tick) => (
+                          <text key={`xt-${tick.value}`} x={tick.x} y={h - 12} textAnchor="middle" className="fill-gray-500 text-[11px]">
+                            {Number(tick.value).toFixed(2).replace(/\.00$/, '').replace(/(\.[\d])0$/, '$1')}
+                          </text>
+                        ))}
+
+                        <text x={l + uw / 2} y={h - 1} textAnchor="middle" className="fill-gray-500 text-[12px] font-medium">Rate (%)</text>
+                        <text x="20" y={t + uh / 2} textAnchor="middle" transform={`rotate(-90 20 ${t + uh / 2})`} className="fill-gray-400 text-[11px]">Probability (%)</text>
+                      </svg>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

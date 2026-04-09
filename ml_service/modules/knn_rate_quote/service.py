@@ -259,9 +259,8 @@ class ProductionQuoteService:
         merchant_ids: List[int],
         cost_type_ids: List[str],
     ) -> pd.DataFrame:
-        # Ensure merchant_ids match the dtype of the reference column (may be str).
-        ref_dtype = reference_txn["merchant_id"].dtype
-        if ref_dtype == object:
+        # Ensure merchant_ids match the dtype of the reference column (may be str or StringDtype).
+        if pd.api.types.is_string_dtype(reference_txn["merchant_id"]):
             coerced_ids = [str(mid) for mid in merchant_ids]
         else:
             coerced_ids = merchant_ids

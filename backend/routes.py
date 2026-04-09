@@ -551,18 +551,25 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         if not card_types:
             card_types = ["both"]
 
+    # Use base_cost_rate (interchange + assessment) for proc_cost in
+    # onboarding rows, NOT recommended_rate (the merchant's total fee).
+    # The ML cost-forecast model was trained on actual processing costs;
+    # feeding the merchant's fee rate instead causes the model to think
+    # cost ≈ fee rate, collapsing estimated profit to ~$0.
+    onboarding_cost_rate_pct = float(base_cost_rate) * 100.0
+
     if use_aggregate_inputs:
         onboarding_rows = MerchantQuoteService._build_onboarding_rows(
             avg_ticket=result["average_ticket"],
             monthly_txn_count=result["transaction_count"],
             brands=["visa", "mastercard"],
-            effective_rate_pct=recommended_rate * 100.0,
+            effective_rate_pct=onboarding_cost_rate_pct,
         )
     else:
         onboarding_rows = MerchantQuoteService.build_onboarding_rows_from_transactions(
             transactions=transactions,
             card_type=card_type,
-            effective_rate_pct=recommended_rate * 100.0,
+            effective_rate_pct=onboarding_cost_rate_pct,
         )
 
     pipeline = MerchantQuoteService.run_ml_forecast_pipeline(
@@ -898,6 +905,39 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             )
 
     fallback_profit = _safe_float(result.get("estimated_total_fees"), 0.0)
+
+    # Deterministic profit from known inputs: margin × volume over the
+    # forecast horizon (3 months).  This is the ground-truth estimate
+    # that doesn't depend on the TPV forecast model.
+    _det_base = _safe_float(result.get("base_cost_rate"), 0.0)
+    _det_vol = _safe_float(result.get("total_volume"), 0.0)
+    _det_margin = recommended_rate - _det_base
+    _horizon_months = max(len(volume_series), 3) if volume_series else 3
+    _det_profit = _det_margin * _det_vol * _horizon_months
+    _det_min_fee_contribution = (
+        _safe_float(result.get("minimum_fee"), 0.0)
+        * _safe_float(result.get("transaction_count"), 0.0)
+        * _horizon_months
+    )
+    _det_profit += _det_min_fee_contribution
+
+    # Sanity-check: if the ML-derived profit is implausibly small
+    # compared to the deterministic estimate, the TPV forecast model
+    # likely failed to handle the merchant's volume (e.g. very high
+    # volume merchants can be outside the model's training distribution).
+    # In that case, substitute the deterministic profit estimate.
+    if (
+        estimated_profit_min is not None
+        and estimated_profit_max is not None
+        and _det_vol > 0
+    ):
+        _det_abs = max(abs(_det_profit), 1.0)
+        _ml_abs = max(abs(estimated_profit_min) + abs(estimated_profit_max), 0.0) / 2.0
+        if _ml_abs < 0.01 * _det_abs:
+            # ML profit is < 1% of expected — TPV forecast is unreliable
+            estimated_profit_min = round(_det_profit * 1.25 if _det_profit < 0 else _det_profit * 0.75, 2)
+            estimated_profit_max = round(_det_profit * 0.75 if _det_profit < 0 else _det_profit * 1.25, 2)
+
     if summary_profitability_pct is None:
         base_rate = _safe_float(result.get("base_cost_rate"), 0.0)
         total_volume = _safe_float(result.get("total_volume"), 0.0)
@@ -906,20 +946,6 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         fallback_profitability += _safe_float(result.get("minimum_fee"), 0.0) * _safe_float(result.get("transaction_count"), 0.0)
         if total_fees > 0:
             summary_profitability_pct = max(-100.0, min(100.0, (fallback_profitability / total_fees) * 100.0))
-
-    # Only apply the guardrail when the MC/fallback profit estimate is
-    # *positive but implausibly small* compared to the deterministic fee
-    # baseline.  When profit is negative (rate < cost), that is a valid
-    # result and must NOT be overwritten.
-    if (
-        estimated_profit_max is not None
-        and estimated_profit_min is not None
-        and estimated_profit_min >= 0.0
-        and fallback_profit > 0
-        and estimated_profit_max < (0.05 * fallback_profit)
-    ):
-        estimated_profit_min = fallback_profit * 0.75
-        estimated_profit_max = fallback_profit * 1.25
 
     base_rate_for_summary = _safe_float(result.get("base_cost_rate"), _base_rate_for_mcc(mcc_int))
     margin_rate_for_summary = recommended_rate - base_rate_for_summary
@@ -930,6 +956,17 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         "estimated_profit_max": round(estimated_profit_max if estimated_profit_max is not None else fallback_profit, 2),
         "profitability_pct": round(summary_profitability_pct, 2) if summary_profitability_pct is not None else None,
     }
+
+    # When ML cost forecast is available, derive suggested rate and margin
+    # from the forecast data: suggested_rate = max(prediction_interval_top,
+    # mean(cost) + desired_margin); margin = suggested_rate - mean(cost).
+    if cost_series and current_rate is None:
+        mean_cost = sum(c["mid"] for c in cost_series) / len(cost_series)
+        prediction_interval_top = sum(c["upper"] for c in cost_series) / len(cost_series)
+        forecast_suggested_rate = max(prediction_interval_top, mean_cost + desired_margin)
+        forecast_margin = forecast_suggested_rate - mean_cost
+        summary["suggested_rate_pct"] = round(forecast_suggested_rate * 100.0, 2)
+        summary["margin_bps"] = int(round(forecast_margin * 10000.0))
 
     return {
         "status": "success",
