@@ -20,7 +20,7 @@ graph TB
         direction LR
         FE["sales-frontend :3000<br/>React CRA"]
         BE["backend :8000<br/>FastAPI · TransactionCostCalc"]
-        MLS["ml-service :8001<br/>FastAPI · KNN · Cost · TPV"]
+        MLS["ml-service :8001<br/>KNN Rate Quote · Cost Forecast<br/>TPV Forecast · Volume Forecast<br/>Profit Forecast · Rate Optimisation<br/>TPV Prediction · Monte Carlo"]
         MFE["merchant-frontend :3001<br/>Vite + React + TS"]
     end
 
