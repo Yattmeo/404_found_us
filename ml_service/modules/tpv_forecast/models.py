@@ -66,6 +66,8 @@ class ProcessMetadata(BaseModel):
     context_mean_dollar: float
     momentum: float
     pool_mean_used: float
+    flat_pool_mean: Optional[float] = None
+    peer_merchant_ids: Optional[List[int]] = None
     mcc: int
     model_variant: str = "tpv_v1"
     horizon_months: int

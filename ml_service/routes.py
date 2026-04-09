@@ -302,14 +302,26 @@ def _weekly_features_to_m9_request(body: dict) -> CostForecastRequest:
     if len(context_months) > 6:
         context_months = context_months[-6:]
 
-    # Derive pool means from the context itself (best available proxy)
-    all_costs = [cm.avg_proc_cost_pct for cm in context_months]
-    pool_mean = sum(all_costs) / len(all_costs) if all_costs else 0.0
+    # Use real knn_pool_mean from TPV forecast when available; otherwise
+    # fall back to the merchant's own context average (degraded mode).
+    knn_pool_mean = body.get("knn_pool_mean")
+    flat_pool_mean = body.get("flat_pool_mean")
+    peer_ids = body.get("peer_merchant_ids")
+
+    if knn_pool_mean is None or flat_pool_mean is None:
+        # Degraded: derive pool means from the context itself (best available proxy)
+        all_costs = [cm.avg_proc_cost_pct for cm in context_months]
+        fallback_mean = sum(all_costs) / len(all_costs) if all_costs else 0.0
+        if knn_pool_mean is None:
+            knn_pool_mean = fallback_mean
+        if flat_pool_mean is None:
+            flat_pool_mean = fallback_mean
 
     return CostForecastRequest(
         context_months=context_months,
-        pool_mean_at_context_end=pool_mean,
-        knn_pool_mean_at_context_end=pool_mean,
+        pool_mean_at_context_end=flat_pool_mean,
+        knn_pool_mean_at_context_end=knn_pool_mean,
+        peer_merchant_ids=peer_ids,
         mcc=mcc,
     )
 

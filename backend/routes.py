@@ -101,7 +101,7 @@ def calculate_revenue_projection(
 ):
     """
     Accepts merchant transaction data and returns a TPV estimate,
-    projected net revenue, and a pgvector-based cluster assignment.
+    projected net revenue, and a cluster assignment.
     The cluster assignment will be replaced with a real model inference
     call once the ML pipeline is wired up.
     """
@@ -111,7 +111,7 @@ def calculate_revenue_projection(
     projected_revenue = round(
         tpv * effective_rate - (payload.fixed_fee or 0.30) * tx_count, 2
     )
-    # TODO: replace with pgvector nearest-neighbour lookup against merchant embeddings
+    # TODO: replace with real nearest-neighbour lookup against merchant embeddings
     cluster_id = abs(hash(payload.mcc_code)) % 5
     return RevenueProjectionResponse(
         merchant_id=payload.merchant_id,

@@ -2,6 +2,8 @@
 
 Merchant pricing intelligence platform. Calculates interchange & network fees, forecasts processing costs and transaction volumes, and recommends optimal merchant rates.
 
+> Full architecture diagrams (Mermaid) are in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ---
 
 ## Architecture
@@ -21,22 +23,22 @@ Merchant pricing intelligence platform. Calculates interchange & network fees, f
 │ :3000     │ │  Vite + TS   │ │  :8000    │   │  :8001      │
 │           │ │  :3001       │ │           │   │             │
 │ Sales     │ │ Online       │ │ Fee calc, │   │ KNN quotes, │
-│ pricing   │ │ quotation    │ │ merchant  │   │ cost & vol  │
-│ tools     │ │ tool         │ │ CRUD, tx  │   │ forecasting │
-│           │ │              │ │ upload    │   │             │
+│ pricing   │ │ quotation    │ │ merchant  │   │ cost + vol  │
+│ tools     │ │ tool         │ │ CRUD, tx  │   │ + profit    │
+│           │ │              │ │ upload    │   │ forecasting │
 └───────────┘ └──────────────┘ └─────┬─────┘   └──────┬──────┘
                                      │                 │
-                          ┌──────────┤          ┌──────┴──────┐
-                          │          │          │             │
-                          ▼          ▼          ▼             ▼
-                    ┌──────────┐ ┌────────┐ ┌────────┐ ┌──────────────┐
-                    │PostgreSQL│ │ Cost   │ │Postgres│ │M9 Forecast   │
-                    │ pgvector │ │Structure││pgvector│ │Service       │
-                    │ :5432    │ │ JSONs  │ │:5432   │ │FastAPI :8092 │
-                    │          │ │(Visa / │ │        │ │              │
-                    │ 3.88M tx │ │Master) │ │ KNN tx │ │Monthly cost  │
-                    │ rows     │ │        │ │ data   │ │forecast (M9) │
-                    └──────────┘ └────────┘ └────────┘ └──────────────┘
+                          ┌──────────┘                 │
+                          │                            │
+                          ▼                            ▼
+                    ┌──────────┐              ┌──────────────┐
+                    │PostgreSQL│              │ Trained Model│
+                    │  16      │              │ Artifacts    │
+                    │ :5432    │              │              │
+                    │          │              │ m9/  (cost)  │
+                    │ 3.88M tx │◄─────────── │ tpv/ (volume)│
+                    │ + KNN    │  shared DB   │              │
+                    └──────────┘              └──────────────┘
 ```
 
 ### Data Flow — Rate Quotation
@@ -48,13 +50,10 @@ User submits transactions
   Backend /api/v1/calculations/desired-margin-details
         │
         ├──► ML Service /ml/getCompositeMerchant     (KNN: 5 nearest merchants)
-        │         │
-        │         ▼
-        ├──► ML Service /ml/GetCostForecast           (M9 → 12 weekly cost %)
-        │         │
-        │         └──► M9 Forecast Service :8092      (monthly forecast, interpolated to weekly)
         │
-        ├──► ML Service /ml/GetVolumeForecast         (SARIMA → 12 weekly TPV $) # Wait for Matthew
+        ├──► ML Service /ml/GetCostForecast           (M9 v2 → 12 weekly cost %)
+        │
+        ├──► ML Service /ml/GetVolumeForecast         (SARIMAX → 12 weekly TPV $)
         │
         ▼
   Backend pairs 12 cost + 12 volume weeks
@@ -66,17 +65,16 @@ User submits transactions
 
 ---
 
-## Services (7 containers)
+## Services (6 containers)
 
 | Container | Build Context | Internal Port | Purpose |
 |-----------|--------------|---------------|---------|
-| **ml-postgres** | `pgvector/pgvector:pg16` | 5432 | PostgreSQL + pgvector — transaction data & KNN tables |
+| **ml-postgres** | `postgres:16` | 5432 | PostgreSQL 16 — all application data & KNN tables |
 | **ml-backend** | `./backend` | 8000 | FastAPI — fee calculation, merchant CRUD, tx upload, ML orchestration |
 | **ml-frontend** | `./frontend` | 3000 | React CRA — Sales pricing tools (served at `/sales`) |
 | **ml-merchant-frontend** | `./merchant-frontend` | 3001 | Vite + React + TS — Online quotation tool (served at `/merchant`) |
 | **ml-nginx** | `nginx:alpine` | **80** | Reverse proxy — sole public port |
-| **ml-service** | `./ml_service` | 8001 | FastAPI — KNN rate quoting, cost & volume forecasting |
-| **m9-forecast-service** | `./ml_pipeline/Matt_EDA/services/GetAvgProcCostForecast Service v2` | 8092 | FastAPI — M9 monthly cost forecast (HuberRegressor + conformal intervals) |
+| **ml-service** | `./ml_service` | 8001 | FastAPI — KNN rate quoting, cost/volume/profit/TPV forecasting |
 
 ---
 
@@ -84,29 +82,38 @@ User submits transactions
 
 ```
 404_found_us/
-├── backend/                  FastAPI backend (fee calc, merchant CRUD, ML orchestration)
-├── frontend/                 Sales React frontend (CRA, served at /sales)
-├── merchant-frontend/        Merchant React frontend (Vite + TS, served at /merchant)
-├── ml_service/               ML microservice (KNN, cost forecast, volume forecast)
+├── docker-compose.yml          Service orchestration (6 containers)
+├── ARCHITECTURE.md             Full architecture docs with Mermaid diagrams
+├── backend/                    FastAPI backend (fee calc, merchant CRUD, ML orchestration)
+│   ├── app.py                  Entry point, CORS, lifespan
+│   ├── routes.py               All /api/v1 endpoints
+│   ├── services.py             DataProcessing, MerchantFeeCalculation, MCC services
+│   ├── models.py               ORM: transactions, merchants, calculation_results, upload_batches
+│   ├── schemas.py              Pydantic request/response models
+│   ├── validators.py           CSV/Excel row validation
 │   └── modules/
-│       ├── knn_rate_quote/       KNN rate quote engine (PostgreSQL-backed)
-│       ├── cost_forecast/        M9 v2 cost forecast proxy + SARIMA legacy
-│       ├── volume_forecast/      SARIMA/SARIMAX volume forecast
-│       ├── m9_forecast/          M9 forecast service proxy layer
-│       ├── rate_optimisation/    Rate optimisation engine (stub)
-│       ├── tpv_prediction/       TPV prediction engine (stub)
-│       ├── cluster_generation/   Cluster generation (scaffold)
-│       └── cluster_assignment/   Cluster assignment (scaffold)
-├── nginx/                    Reverse proxy config (default.conf)
-├── cost_structure/           Visa & Mastercard fee schedule JSONs
-├── KNN Demo Service/         Source SQLite DB (mounted read-only into ml-service)
-├── ml_pipeline/              EDA notebooks, modelling, pre-processing
-│   ├── Matt_EDA/                 EDA analysis, service prototypes, clustering
-│   ├── forecasting/              SARIMA notebooks & scripts
-│   ├── pre-processing/           SQL extraction, train/test splits
-│   └── tree_models/              Tree-based model prototypes
-├── docker-compose.yml
-└── data/                     Data loading scripts
+│       ├── cost_calculation/   Interchange cost computation
+│       └── merchant_quote/     Quote generation with ML pipeline
+├── ml_service/                 FastAPI ML microservice
+│   ├── app.py                  Entry point, initialises M9 + TPV caches
+│   ├── routes.py               All /ml endpoints
+│   ├── artifacts/
+│   │   ├── m9/5411/{1,3,6}/    M9 v2 cost forecast models
+│   │   └── tpv/{4121,5411,5499,5812}/  TPV forecast models
+│   └── modules/
+│       ├── knn_rate_quote/     KNN-based rate quotation (PostgreSQL-backed)
+│       ├── cost_forecast/      M9 v2 artifact-based cost prediction
+│       ├── tpv_forecast/       Conformal TPV prediction
+│       ├── volume_forecast/    SARIMAX weekly volume forecast
+│       ├── profit_forecast/    Monte Carlo profit simulation
+│       ├── rate_optimisation/  Rate optimisation engine
+│       └── tpv_prediction/     TPV prediction engine
+├── frontend/                   React CRA — Sales calculator UI (served at /sales)
+├── merchant-frontend/          Vite + React + TS — Merchant quotation UI (served at /merchant)
+├── nginx/                      Reverse proxy config (default.conf)
+├── cost_structure/             Visa & Mastercard fee schedule JSONs (mounted ro)
+├── data/                       Sample/test CSV datasets
+└── archive/                    Archived dead/legacy code
 ```
 
 ---
@@ -114,22 +121,18 @@ User submits transactions
 ## Getting Started
 
 ```bash
-# 1. Start all services
+# Start all services
 docker compose up --build -d
-
-# 2. Seed KNN reference data (first run only)
-docker compose exec ml-service python migrate_sqlite_to_postgres.py
-
-# 3. Load transaction data (first run only)
-python data/load_to_postgres.py
 ```
+
+KNN transaction data (~3.88M rows) is already seeded in PostgreSQL. No additional migration steps required.
 
 | URL | What |
 |-----|------|
 | http://localhost/sales/ | Sales pricing tools |
 | http://localhost/merchant/ | Online quotation tool |
-| http://localhost/api/v1/docs | Backend API docs |
-| http://localhost/ml/docs | ML Service API docs |
+| http://localhost/api/v1/docs | Backend API docs (Swagger) |
+| http://localhost/ml/docs | ML Service API docs (Swagger) |
 
 ---
 
@@ -139,28 +142,37 @@ python data/load_to_postgres.py
 
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/calculations/transaction-costs` | Interchange & network cost enrichment (streams CSV) |
 | POST | `/calculations/merchant-fee` | Calculate merchant fees from transactions |
 | POST | `/calculations/desired-margin` | Calculate desired margin rate |
 | POST | `/calculations/desired-margin-details` | **Full pipeline** — fee calc + ML forecasts + profitability |
-| POST | `/calculations/transaction-costs` | Interchange & network cost enrichment (streams CSV) |
 | POST | `/transactions/upload` | Upload transaction CSV/Excel |
+| GET | `/transactions` | List transactions (paginated) |
+| GET | `/transactions/{id}` | Get transaction by ID |
 | POST | `/projections/revenue` | ML-driven revenue projection |
-| POST | `/merchant-quote` | Generate merchant quote |
+| POST | `/merchant-quote` | Generate merchant quote with ML insights |
 | GET | `/merchants` | List merchants |
+| GET | `/merchants/{id}` | Get merchant by ID |
+| POST | `/merchants` | Create merchant |
 | GET | `/mcc-codes` | List MCC codes |
+| GET | `/mcc-codes/search` | Search MCC codes |
+| GET | `/mcc-codes/{code}` | Get MCC code details |
 
 ### ML Service (`/ml`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/process` | Run full ML pipeline (rate opt → TPV → KNN) |
+| POST | `/process` | Orchestrator — runs rate opt → TPV → KNN engines |
+| POST | `/rate-optimisation` | Rate optimisation engine |
+| POST | `/tpv-prediction` | TPV prediction engine |
 | POST | `/knn-rate-quote` | KNN rate quote engine |
 | POST | `/getQuote` | Match 5 similar merchants, return cost history |
 | POST | `/getCompositeMerchant` | Match 5 similar merchants, return composite features |
-| POST | `/GetCostForecast` | 12-week cost forecast (M9 monthly → weekly interpolation) |
-| POST | `/GetVolumeForecast` | 12-week volume forecast (SARIMA) |
-| POST | `/rate-optimisation` | Rate optimisation engine (stub) |
-| POST | `/tpv-prediction` | TPV prediction engine (stub) |
+| GET | `/cost-forecast/health` | M9 v2 cost forecast health check |
+| POST | `/GetCostForecast` | M9 v2 monthly cost forecast (conformal intervals) |
+| POST | `/GetTPVForecast` | Conformal TPV forecast |
+| POST | `/GetVolumeForecast` | SARIMAX weekly volume forecast |
+| POST | `/GetProfitForecast` | Monte Carlo profit simulation |
 
 ---
 
@@ -168,36 +180,19 @@ python data/load_to_postgres.py
 
 | Asset | Location | Description |
 |-------|----------|-------------|
-| Transaction data | PostgreSQL `mldb` | ~3.88M rows, loaded via `data/load_to_postgres.py` |
-| KNN reference DB | `KNN Demo Service/KNN Demo Service/rate_quote.sqlite` | Source for `knn_transactions` + `knn_cost_type_ref` tables |
+| Transaction + KNN data | PostgreSQL `mldb` | ~3.88M KNN rows + application tables |
+| M9 cost models | `ml_service/artifacts/m9/` | HuberRegressor + conformal interval artifacts per MCC/horizon |
+| TPV forecast models | `ml_service/artifacts/tpv/` | Trained TPV models per MCC |
 | Fee schedules | `cost_structure/*.JSON` | Visa & Mastercard card-level and network-level fees |
-| Pre-processed splits | `ml_pipeline/pre-processing/` | Train/test/validate CSVs for MCCs 4121, 5411, 5812 |
 
 ---
 
 ## Notes
 
-- **KNN Demo Service folder** must be kept — `docker-compose.yml` mounts it read-only into `ml-service`. The SQLite database is the source for KNN data migration.
-- **`migrate_sqlite_to_postgres.py`** is a one-off data tool, safe to re-run (`if_exists="replace"`).
-- **M9 forecast service** runs in degraded mode without trained artifacts — falls back to `base_cost_rate` from cost-structure JSONs with drift factors and CI widening.
-- **Cost forecast** interpolates 3 monthly M9 forecasts into 12 weekly points to match the SARIMA volume forecast horizon.
-
-### Additional ML endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/ml/getQuote` | KNN quote service endpoint |
-| `POST` | `/ml/getCompositeMerchant` | KNN composite merchant profile endpoint |
-| `POST` | `/ml/GetCostForecast` | Cost forecast service endpoint |
-| `POST` | `/ml/GetVolumeForecast` | Volume forecast service endpoint |
-
----
-
-## Architecture And Mermaid Documentation
-
-Architecture and runtime diagrams are maintained in [presentation/README.md](presentation/README.md).
-
-- Markdown Mermaid sources: [presentation](presentation)
+- **All data lives in PostgreSQL** — KNN data was migrated from SQLite and is now served entirely from `mldb`.
+- **M9 cost forecast** loads pre-trained artifacts from `ml_service/artifacts/m9/`. Without artifacts it falls back to `base_cost_rate` from fee-schedule JSONs with drift factors.
+- **Cost forecast** interpolates 3 monthly M9 forecasts into 12 weekly points to match the SARIMAX volume forecast horizon.
+- **Archive folder** contains dead/legacy code preserved for reference — see `archive/` for details.
 - Browser-friendly diagram pack: [presentation/index.html](presentation/index.html)
 
 Quick local preview:

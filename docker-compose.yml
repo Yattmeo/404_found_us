@@ -1,6 +1,6 @@
 ﻿services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     container_name: ml-postgres
     environment:
       - POSTGRES_USER=pguser
@@ -87,9 +87,6 @@
       - TPV_ARTIFACTS_BASE_PATH=/app/artifacts/tpv
     volumes:
       - ./ml_service:/app
-      - "./KNN Demo Service/KNN Demo Service:/data/knn_source:ro"
-      - "./ml_pipeline/Matt_EDA/services/GetAvgProcCostForecast Service v2/artifacts:/app/artifacts/m9:ro"
-      - "./ml_service/artifacts/tpv:/app/artifacts/tpv:ro"
     depends_on:
       - postgres
     restart: unless-stopped

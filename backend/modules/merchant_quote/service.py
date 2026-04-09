@@ -179,25 +179,10 @@ class MerchantQuoteService:
                 if not weekly_features:
                     return None
 
-                # 1. Cost forecast (M9 HuberRegressor — returns 12 weekly items)
-                try:
-                    cost_body = {
-                        "composite_weekly_features": weekly_features,
-                        "onboarding_merchant_txn_df": onboarding_rows,
-                        "mcc": mcc,
-                    }
-                    if base_cost_rate is not None:
-                        cost_body["base_cost_rate"] = base_cost_rate
-                    cost_resp = client.post(
-                        f"{_ML_SERVICE_URL}/ml/GetCostForecast",
-                        json=cost_body,
-                    )
-                    cost_resp.raise_for_status()
-                    cost_payload = cost_resp.json()
-                except Exception as exc:
-                    logger.warning("Cost forecast step failed (non-fatal): %s", exc)
-
-                # 2. TPV forecast (HuberRegressor in log-space — replaces SARIMA)
+                # 1. TPV forecast first — provides real knn_pool_mean for cost forecast
+                tpv_pool_mean = None
+                tpv_flat_pool_mean = None
+                tpv_peer_ids = None
                 try:
                     tpv_resp = client.post(
                         f"{_ML_SERVICE_URL}/ml/GetTPVForecast",
@@ -209,8 +194,38 @@ class MerchantQuoteService:
                     )
                     tpv_resp.raise_for_status()
                     tpv_payload = tpv_resp.json()
+
+                    # Extract pool means from TPV for downstream cost forecast
+                    tpv_meta = tpv_payload.get("process_metadata") or {}
+                    tpv_pool_mean = tpv_meta.get("pool_mean_used")
+                    tpv_flat_pool_mean = tpv_meta.get("flat_pool_mean")
+                    tpv_peer_ids = tpv_meta.get("peer_merchant_ids")
                 except Exception as exc:
                     logger.warning("TPV forecast step failed (non-fatal): %s", exc)
+
+                # 2. Cost forecast — pass real pool means from TPV when available
+                try:
+                    cost_body = {
+                        "composite_weekly_features": weekly_features,
+                        "onboarding_merchant_txn_df": onboarding_rows,
+                        "mcc": mcc,
+                    }
+                    if base_cost_rate is not None:
+                        cost_body["base_cost_rate"] = base_cost_rate
+                    if tpv_pool_mean is not None:
+                        cost_body["knn_pool_mean"] = tpv_pool_mean
+                    if tpv_flat_pool_mean is not None:
+                        cost_body["flat_pool_mean"] = tpv_flat_pool_mean
+                    if tpv_peer_ids is not None:
+                        cost_body["peer_merchant_ids"] = tpv_peer_ids
+                    cost_resp = client.post(
+                        f"{_ML_SERVICE_URL}/ml/GetCostForecast",
+                        json=cost_body,
+                    )
+                    cost_resp.raise_for_status()
+                    cost_payload = cost_resp.json()
+                except Exception as exc:
+                    logger.warning("Cost forecast step failed (non-fatal): %s", exc)
 
                 # 3. Monte Carlo profit forecast — cost forecast now returns monthly directly
                 if cost_payload is not None and tpv_payload is not None and fee_rate is not None:

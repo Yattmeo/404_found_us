@@ -72,9 +72,10 @@ class SQLAlchemyMerchantRepository:
 
         query = """
             SELECT transaction_id, date, amount, merchant_id, mcc,
-                   card_brand, card_type, cost_type_ID, proc_cost
-            FROM transactions
-            WHERE CAST(mcc AS INTEGER) = :mcc
+                   card_brand, card_type,
+                   cost_type_id AS "cost_type_ID", proc_cost
+            FROM knn_transactions
+            WHERE CAST(COALESCE(mcc, 0) AS INTEGER) = :mcc
         """
         bind: dict = {"mcc": int(mcc)}
 
@@ -99,5 +100,5 @@ class SQLAlchemyMerchantRepository:
         from sqlalchemy import text
         engine = self._engine()
         with engine.connect() as conn:
-            ref = pd.read_sql(text("SELECT cost_type_ID FROM cost_type_ref"), conn)
-        return ref["cost_type_ID"].dropna().astype(int).astype(str).tolist()
+            ref = pd.read_sql(text("SELECT cost_type_id FROM knn_cost_type_ref"), conn)
+        return ref["cost_type_id"].dropna().astype(int).astype(str).tolist()

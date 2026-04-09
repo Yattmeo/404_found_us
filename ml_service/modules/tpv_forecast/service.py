@@ -704,6 +704,8 @@ def get_tpv_forecast(req: TPVForecastRequest) -> TPVForecastResponse:
         context_mean_dollar=c_mean_dollar,
         momentum=momentum,
         pool_mean_used=knn_pool_mean,
+        flat_pool_mean=flat_pool_mean,
+        peer_merchant_ids=peer_ids,
         mcc=req.mcc,
         horizon_months=req.horizon_months,
         confidence_interval=req.confidence_interval,
