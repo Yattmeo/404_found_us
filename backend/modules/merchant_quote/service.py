@@ -160,6 +160,7 @@ class MerchantQuoteService:
         onboarding_rows: list[dict],
         base_cost_rate: float | None = None,
         fee_rate: float | None = None,
+        target_margin: float | None = None,
     ) -> dict | None:
         if not onboarding_rows:
             return None
@@ -231,6 +232,35 @@ class MerchantQuoteService:
                     )
                     cost_resp.raise_for_status()
                     cost_payload = cost_resp.json()
+
+                    # The M9 v2 cost model was trained on
+                    # sum(proc_cost_cents) / sum(amount_dollars) which yields
+                    # percentage-scale values (e.g. 1.5 = 1.5 %).  The rest of
+                    # the pipeline (profit simulation, profitability curves)
+                    # expects decimal fractions (0.015 = 1.5 %) consistent with
+                    # `recommended_rate`.  Detect percentage-scale forecasts and
+                    # convert them in-place so all downstream code sees decimals.
+                    _cost_fc = cost_payload.get("forecast", [])
+                    if _cost_fc:
+                        _sample_mid = MerchantQuoteService._safe_float(
+                            _cost_fc[0].get("proc_cost_pct_mid"), 0.0
+                        )
+                        if _sample_mid > 0.10:  # clearly percentage, not decimal
+                            for _item in _cost_fc:
+                                for _key in (
+                                    "proc_cost_pct_mid",
+                                    "proc_cost_pct_ci_lower",
+                                    "proc_cost_pct_ci_upper",
+                                ):
+                                    _val = _item.get(_key)
+                                    if _val is not None:
+                                        _item[_key] = _val / 100.0
+                            # Also scale the conformal half-width so the MC
+                            # simulation derives correct sigma.
+                            _cm = cost_payload.get("conformal_metadata")
+                            if _cm and _cm.get("half_width") is not None:
+                                _cm["half_width"] = _cm["half_width"] / 100.0
+
                 except Exception as exc:
                     logger.warning("Cost forecast step failed (non-fatal): %s", exc)
 
@@ -253,9 +283,7 @@ class MerchantQuoteService:
                                 - monthly_cost[0]["proc_cost_pct_ci_lower"]
                             ) / 2.0
 
-                            profit_resp = client.post(
-                                f"{_ML_SERVICE_URL}/ml/GetProfitForecast",
-                                json={
+                            profit_body = {
                                     "tpv_service_output": tpv_payload,
                                     "cost_service_output": {
                                         "forecast": monthly_cost,
@@ -268,7 +296,12 @@ class MerchantQuoteService:
                                     },
                                     "fee_rate": fee_rate,
                                     "mcc": mcc,
-                                },
+                            }
+                            if target_margin is not None:
+                                profit_body["target_margin"] = target_margin
+                            profit_resp = client.post(
+                                f"{_ML_SERVICE_URL}/ml/GetProfitForecast",
+                                json=profit_body,
                             )
                             profit_resp.raise_for_status()
                             profit_payload = profit_resp.json()

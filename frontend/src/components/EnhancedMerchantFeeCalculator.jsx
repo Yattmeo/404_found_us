@@ -110,6 +110,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       expectedVolume: processingVolume,
       adoptionProbability: null,
       profitability: profitabilityPct,
+      targetMarginMet: null,
       quotableRange: {
         min: suggestedRate !== null ? Math.max(0, Number((suggestedRate - 0.1).toFixed(2))) : null,
         max: suggestedRate !== null ? Number((suggestedRate + 0.1).toFixed(2)) : null,
@@ -218,6 +219,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       expectedVolume: processingVolume,
       adoptionProbability: null,
       profitability: profitabilityPct,
+      targetMarginMet: summary.target_margin_met ?? null,
       quotableRange: {
         min: suggestedRate !== null ? Math.max(0, Number((suggestedRate - 0.1).toFixed(2))) : null,
         max: suggestedRate !== null ? Number((suggestedRate + 0.1).toFixed(2)) : null,

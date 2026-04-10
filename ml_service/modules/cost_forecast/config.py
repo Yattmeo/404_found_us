@@ -33,7 +33,7 @@ DEFAULT_HORIZON_MONTHS: int = 3
 DEFAULT_CONFIDENCE_INTERVAL: float = 0.90
 
 # Supported MCCs
-SUPPORTED_MCCS: list[int] = [5411]
+SUPPORTED_MCCS: list[int] = [4121, 5411, 5499, 5812]
 
 # ---------------------------------------------------------------------------
 # Hot-reload

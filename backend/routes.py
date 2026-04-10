@@ -578,6 +578,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         onboarding_rows=onboarding_rows,
         base_cost_rate=float(base_cost_rate) if base_cost_rate is not None else None,
         fee_rate=recommended_rate if recommended_rate > 0 else None,
+        target_margin=desired_margin,
     )
 
     def _safe_float(value: object, default: float = 0.0) -> float:
@@ -616,6 +617,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     estimated_profit_min = None
     estimated_profit_max = None
     summary_profitability_pct = None
+    avg_p_target_margin_met = None
     ml_context = None
 
     if pipeline is not None:
@@ -704,6 +706,10 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 avg_p_profitable = _safe_float(mc_summary.get("avg_p_profitable"), 0.0)
                 if avg_p_profitable > 0:
                     summary_profitability_pct = round(avg_p_profitable * 100.0, 2)
+
+                raw_target_met = mc_summary.get("avg_p_target_margin_met")
+                if raw_target_met is not None:
+                    avg_p_target_margin_met = _safe_float(raw_target_met, None)
 
         elif len(cost_series) > 0 and len(volume_series) > 0:
             # Fallback: derive profitability from cost + tpv series when no MC
@@ -890,11 +896,29 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         default_rate_grid = [
             1.50, 1.75, 2.00, 2.25, 2.35, 2.50, 2.75, 3.00, 3.25, 3.50,
         ]
-        # Anchor around the recommended rate so fallback probability remains shaped
-        # and monotonic rather than flattening at 100% for all quoted rates.
-        anchor_rate = _safe_float(result.get("recommended_rate"), recommended_rate)
-        std_dev = 0.0045  # 45 bps spread around anchor rate
-        for rate_pct in default_rate_grid:
+        # Anchor CDF at the BASE COST rate (break-even), not the recommended
+        # fee rate.  P(profitable) = P(cost < rate), so the Gaussian mean
+        # must be the cost.  Using the fee rate here would center the curve
+        # at 50 % for the suggested rate — clearly wrong when there is a
+        # positive margin.
+        fallback_base_cost = _safe_float(
+            result.get("base_cost_rate"),
+            _base_rate_for_mcc(mcc_int),
+        )
+        anchor_rate = fallback_base_cost
+        std_dev = 0.0045  # 45 bps spread around cost rate
+        recommended_rate_pct = round(recommended_rate * 100.0, 2)
+        # Ensure the grid includes the recommended rate
+        rate_grid_set = set(default_rate_grid)
+        rate_grid_set.add(recommended_rate_pct)
+        grid_max = max(3.50, recommended_rate_pct + 0.50)
+        if grid_max > max(default_rate_grid):
+            v = max(default_rate_grid) + 0.25
+            while v <= grid_max + 1e-9:
+                rate_grid_set.add(round(v, 2))
+                v += 0.25
+        rate_grid = sorted(rate_grid_set)
+        for rate_pct in rate_grid:
             rate_decimal = rate_pct / 100.0
             probability = MerchantQuoteService.normal_cdf(rate_decimal, anchor_rate, std_dev)
             profitability_curve.append(
@@ -969,6 +993,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         "estimated_profit_min": round(estimated_profit_min if estimated_profit_min is not None else fallback_profit, 2),
         "estimated_profit_max": round(estimated_profit_max if estimated_profit_max is not None else fallback_profit, 2),
         "profitability_pct": round(summary_profitability_pct, 2) if summary_profitability_pct is not None else None,
+        "target_margin_met": avg_p_target_margin_met is not None and avg_p_target_margin_met >= 0.5,
     }
 
     # When ML cost forecast is available, derive suggested rate and margin

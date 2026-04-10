@@ -411,13 +411,21 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
             {/* Blue box with profitability metrics */}
             <div className="bg-blue-50 rounded-2xl p-6 border border-blue-100 shadow-sm">
               <div className="space-y-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">% of profitability:</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {results.profitability !== null && results.profitability !== undefined 
-                      ? `${results.profitability}%` 
-                      : 'Pending backend calculation'}
-                  </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">% of profitability:</p>
+                    <p className="text-2xl font-bold text-gray-900">
+                      {results.profitability !== null && results.profitability !== undefined 
+                        ? `${results.profitability}%` 
+                        : 'Pending backend calculation'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-700">Target Margin Met:</p>
+                    <p className={`text-2xl font-bold ${results.targetMarginMet === true ? 'text-[#17a455]' : results.targetMarginMet === false ? 'text-red-600' : 'text-gray-400'}`}>
+                      {results.targetMarginMet === true ? 'Yes' : results.targetMarginMet === false ? 'No' : 'N/A'}
+                    </p>
+                  </div>
                 </div>
                 
                 <div>
@@ -538,10 +546,20 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
             <div className="space-y-6">
               {/* Suggested Rate */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
-                <p className="text-4xl font-bold text-[#17a455]">
-                  {results.suggestedRate !== null && results.suggestedRate !== undefined ? `${Number(results.suggestedRate).toFixed(2)}%` : 'Pending backend calculation'}
-                </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
+                    <p className="text-4xl font-bold text-[#17a455]">
+                      {results.suggestedRate !== null && results.suggestedRate !== undefined ? `${Number(results.suggestedRate).toFixed(2)}%` : 'Pending backend calculation'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Target Margin Met:</p>
+                    <p className={`text-4xl font-bold ${results.targetMarginMet === true ? 'text-[#17a455]' : results.targetMarginMet === false ? 'text-red-600' : 'text-gray-400'}`}>
+                      {results.targetMarginMet === true ? 'Yes' : results.targetMarginMet === false ? 'No' : 'N/A'}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
