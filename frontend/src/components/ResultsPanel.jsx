@@ -430,7 +430,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                 </div>
                 
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Estimated Profit:</p>
+                  <p className="text-sm font-medium text-gray-700">Total estimated profit in the next 3 months:</p>
                   {orderedProfitRange ? (
                     <p className="text-3xl font-bold">
                       <span className={getAmountClass(orderedProfitRange.low)}>
@@ -514,14 +514,14 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Expected Annual Volume</p>
+                      <p className="text-sm text-gray-600">Expected revenue in the next 3 months</p>
                       <p className="text-2xl font-bold text-gray-900">
                         {(() => {
                           const monthlyVolume = Number(results.processingVolume || results.expectedVolume || 0);
                           if (!monthlyVolume) return '$0 - $0';
-                          const annual = monthlyVolume * 12;
-                          const lower = annual * 0.75;
-                          const upper = annual * 1.25;
+                          const threeMonth = monthlyVolume * 3;
+                          const lower = threeMonth * 0.75;
+                          const upper = threeMonth * 1.25;
                           return `${formatCurrency(lower)} - ${formatCurrency(upper)}`;
                         })()}
                       </p>
@@ -552,7 +552,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
               </div>
 
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">Total estimated profit in the next 3 months:</p>
                 {orderedProfitRange ? (
                   <p className="text-4xl font-bold">
                     <span className={getAmountClass(orderedProfitRange.low)}>
@@ -571,14 +571,14 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
               </div>
 
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <p className="text-sm font-medium text-gray-700 mb-2">Expected Annual Volume:</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">Expected revenue in the next 3 months:</p>
                 <p className="text-4xl font-bold text-gray-900">
                   {(() => {
                     const monthlyVolume = Number(results.processingVolume || results.expectedVolume || 0);
                     if (!monthlyVolume) return '$0 - $0';
-                    const annual = monthlyVolume * 12;
-                    const lower = annual * 0.75;
-                    const upper = annual * 1.25;
+                    const threeMonth = monthlyVolume * 3;
+                    const lower = threeMonth * 0.75;
+                    const upper = threeMonth * 1.25;
                     return `${formatCurrency(lower)} - ${formatCurrency(upper)}`;
                   })()}
                 </p>

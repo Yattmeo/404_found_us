@@ -482,7 +482,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-            <p className="text-sm font-medium text-gray-700 mb-2">Estimated Profit:</p>
+            <p className="text-sm font-medium text-gray-700 mb-2">Total estimated profit in the next 3 months:</p>
             <p className={`text-4xl font-bold ${isEstimatedProfitNegative ? 'text-red-600' : 'text-[#17a455]'}`}>
               {estimatedProfitRange
                 ? estimatedProfitRange
