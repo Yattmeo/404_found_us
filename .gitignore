@@ -40,6 +40,7 @@ wandb/
 
 # ML models and data
 *.pkl
+!ml_service/artifacts/**/*.pkl
 *.h5
 *.model
 catboost_info/
