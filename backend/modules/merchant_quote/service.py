@@ -74,7 +74,11 @@ class MerchantQuoteService:
     ) -> list[dict]:
         rows: list[dict] = []
         today = datetime.now(timezone.utc).date()
-        safe_rate = max(effective_rate_pct / 100.0, 0.005)
+        # Keep rate in percentage form so proc_cost is in cents-scale
+        # (matching training data where sum(proc_cost)/sum(amount) ≈ 1.5
+        # for 1.5% cost).  Previous code divided by 100 which produced
+        # dollar-scale proc_cost, giving the M9 model 100× too-small input.
+        safe_rate_pct = max(effective_rate_pct, 0.5)
         card_type = MerchantQuoteService._card_type_from_brands(brands)
 
         # Build synthetic transactions that form two complete calendar months
@@ -105,7 +109,7 @@ class MerchantQuoteService:
                         {
                             "transaction_date": day.isoformat(),
                             "amount": scaled_amount,
-                            "proc_cost": round(scaled_amount * safe_rate, 4),
+                            "proc_cost": round(scaled_amount * safe_rate_pct, 4),
                             "cost_type_ID": 1,
                             "card_type": card_type,
                             "monthly_txn_count": monthly_txn_count,
@@ -120,7 +124,10 @@ class MerchantQuoteService:
         effective_rate_pct: float,
     ) -> list[dict]:
         rows: list[dict] = []
-        safe_rate = max(effective_rate_pct / 100.0, 0.0)
+        # Keep rate in percentage form so proc_cost is in cents-scale,
+        # matching training data where sum(proc_cost)/sum(amount) yields
+        # percentage-scale cost ratios for the composite merchant service.
+        safe_rate_pct = max(effective_rate_pct, 0.0)
 
         for tx in transactions:
             amount = MerchantQuoteService._safe_float(tx.get("amount"), 0.0)
@@ -145,7 +152,7 @@ class MerchantQuoteService:
                 {
                     "transaction_date": str(transaction_date),
                     "amount": round(amount, 2),
-                    "proc_cost": round(amount * safe_rate, 6),
+                    "proc_cost": round(amount * safe_rate_pct, 6),
                     "cost_type_ID": cost_type_id,
                     "card_type": row_card_type,
                 }
@@ -211,7 +218,9 @@ class MerchantQuoteService:
                 except Exception as exc:
                     logger.warning("TPV forecast step failed (non-fatal): %s", exc)
 
-                # 2. Cost forecast — pass real pool means from TPV when available
+                # 2. Cost forecast — let M9 derive pool means from cost context
+                #    (TPV pool means are log-TPV values, NOT cost percentages,
+                #     so passing them would poison the M9 cost model.)
                 try:
                     cost_body = {
                         "composite_weekly_features": weekly_features,
@@ -220,10 +229,6 @@ class MerchantQuoteService:
                     }
                     if base_cost_rate is not None:
                         cost_body["base_cost_rate"] = base_cost_rate
-                    if tpv_pool_mean is not None:
-                        cost_body["knn_pool_mean"] = tpv_pool_mean
-                    if tpv_flat_pool_mean is not None:
-                        cost_body["flat_pool_mean"] = tpv_flat_pool_mean
                     if tpv_peer_ids is not None:
                         cost_body["peer_merchant_ids"] = tpv_peer_ids
                     cost_resp = client.post(
@@ -233,33 +238,26 @@ class MerchantQuoteService:
                     cost_resp.raise_for_status()
                     cost_payload = cost_resp.json()
 
-                    # The M9 v2 cost model was trained on
-                    # sum(proc_cost_cents) / sum(amount_dollars) which yields
+                    # The ML cost forecast (both M9 and fallback) outputs
                     # percentage-scale values (e.g. 1.5 = 1.5 %).  The rest of
                     # the pipeline (profit simulation, profitability curves)
                     # expects decimal fractions (0.015 = 1.5 %) consistent with
-                    # `recommended_rate`.  Detect percentage-scale forecasts and
-                    # convert them in-place so all downstream code sees decimals.
+                    # `recommended_rate`.  Always convert and floor at 0.
                     _cost_fc = cost_payload.get("forecast", [])
                     if _cost_fc:
-                        _sample_mid = MerchantQuoteService._safe_float(
-                            _cost_fc[0].get("proc_cost_pct_mid"), 0.0
-                        )
-                        if _sample_mid > 0.10:  # clearly percentage, not decimal
-                            for _item in _cost_fc:
-                                for _key in (
-                                    "proc_cost_pct_mid",
-                                    "proc_cost_pct_ci_lower",
-                                    "proc_cost_pct_ci_upper",
-                                ):
-                                    _val = _item.get(_key)
-                                    if _val is not None:
-                                        _item[_key] = _val / 100.0
-                            # Also scale the conformal half-width so the MC
-                            # simulation derives correct sigma.
-                            _cm = cost_payload.get("conformal_metadata")
-                            if _cm and _cm.get("half_width") is not None:
-                                _cm["half_width"] = _cm["half_width"] / 100.0
+                        for _item in _cost_fc:
+                            for _key in (
+                                "proc_cost_pct_mid",
+                                "proc_cost_pct_ci_lower",
+                                "proc_cost_pct_ci_upper",
+                            ):
+                                _val = _item.get(_key)
+                                if _val is not None:
+                                    _item[_key] = max(_val / 100.0, 0.0)
+                        # Also scale the conformal half-width.
+                        _cm = cost_payload.get("conformal_metadata")
+                        if _cm and _cm.get("half_width") is not None:
+                            _cm["half_width"] = _cm["half_width"] / 100.0
 
                 except Exception as exc:
                     logger.warning("Cost forecast step failed (non-fatal): %s", exc)

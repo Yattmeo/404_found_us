@@ -1,5 +1,5 @@
 """
-service.py — Monte Carlo profit simulation.
+service.py - Monte Carlo profit simulation (updated with CI-shaped soft guardrails).
 
 Accepts pre-computed outputs from the TPV and AvgProcCost forecast services,
 then runs an independent Monte Carlo simulation to derive the profit
@@ -56,7 +56,7 @@ def _sample_cost_pct_soft_guardrail(
     lower = float(lower)
     upper = float(upper)
 
-    # Degenerate interval: fallback to Gaussian if we cannot form a proper CI band.
+    # Degenerate interval fallback to Gaussian if we cannot form a proper CI band.
     if upper <= lower:
         sigma_cost = cost_pct_hw / z if z > 0 else max(cost_pct_hw, 1e-9)
         samples = rng.normal(cost_pct_mid, sigma_cost, n_simulations)
@@ -79,7 +79,7 @@ def _sample_cost_pct_soft_guardrail(
         random_state=rng,
     )
 
-    # Tail scales tied to CI geometry so widths stay risk-adaptive.
+    # Tail scales are tied to CI geometry so widths stay risk-adaptive.
     left_scale = max((cost_pct_mid - lower) / max(z, 1e-9), 1e-9)
     right_scale = max((upper - cost_pct_mid) / max(z, 1e-9), 1e-9)
 
@@ -104,6 +104,12 @@ def _simulate_profit_month(
     cost_pct_ci_lower: float | None = None,
     cost_pct_ci_upper: float | None = None,
 ) -> ProfitMonth:
+    """
+    Run independent Monte Carlo for one forecast month.
+
+    Converts conformal half-widths to Gaussian sigma using:
+        CI = z_alpha * sigma  ->  sigma = half_width / z_alpha
+    """
     z = norm.ppf((1 + confidence_interval) / 2)
 
     sigma_tpv = tpv_hw / z if z > 0 else tpv_hw

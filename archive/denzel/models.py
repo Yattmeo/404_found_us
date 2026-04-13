@@ -1,5 +1,5 @@
 """
-models.py — Pydantic request/response models for the GetProfitForecast module.
+models.py - Pydantic request/response models for the GetProfitForecast module.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ class ProfitForecastRequest(BaseModel):
     )
     target_margin: Optional[float] = Field(
         default=None,
-        description="Optional target profit margin (fee_rate − cost_pct).",
+        description="Optional target profit margin (fee_rate - cost_pct).",
     )
 
 

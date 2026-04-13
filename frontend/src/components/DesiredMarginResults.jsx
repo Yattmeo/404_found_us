@@ -488,6 +488,14 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                 ? estimatedProfitRange
                 : <span className="text-xl text-gray-400">Pending backend calculation</span>}
             </p>
+            {results.estimatedProfitMin != null && results.estimatedProfitMax != null && (
+              <div className="mt-2">
+                <p className="text-sm font-medium text-gray-500">Estimated annual profit (1 year):</p>
+                <p className={`text-2xl font-bold ${isEstimatedProfitNegative ? 'text-red-600' : 'text-[#17a455]'}`}>
+                  {formatCurrencyRange(results.estimatedProfitMin * 4, results.estimatedProfitMax * 4)}
+                </p>
+              </div>
+            )}
           </div>
 
           <button

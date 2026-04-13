@@ -611,6 +611,24 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         "end_date": max(transaction_dates) if transaction_dates else None,
     }
 
+    # Derive monthly_volume so the frontend always has a correct per-month
+    # figure for the "Expected revenue" card.  For aggregate inputs the
+    # total_volume already IS monthly; for CSV transactions we estimate
+    # by dividing total_volume by the span of months in the data.
+    if use_aggregate_inputs:
+        tx_summary["monthly_volume"] = tx_summary["total_volume"]
+    elif tx_summary["start_date"] and tx_summary["end_date"]:
+        from datetime import datetime as _dt
+        try:
+            _d0 = _dt.fromisoformat(str(tx_summary["start_date"])[:10])
+            _d1 = _dt.fromisoformat(str(tx_summary["end_date"])[:10])
+            _span_months = max(1, (_d1 - _d0).days / 30.44)
+            tx_summary["monthly_volume"] = round(tx_summary["total_volume"] / _span_months, 2)
+        except Exception:
+            tx_summary["monthly_volume"] = tx_summary["total_volume"]
+    else:
+        tx_summary["monthly_volume"] = tx_summary["total_volume"]
+
     cost_series = []
     volume_series = []
     profitability_curve = []
@@ -928,7 +946,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 }
             )
 
-    fallback_profit = _safe_float(result.get("estimated_total_fees"), 0.0)
+    fallback_profit = _safe_float(result.get("estimated_total_fees"), 0.0) * 3.0  # monthly → 3-month
 
     # Deterministic profit from known inputs: margin × volume over the
     # forecast horizon (3 months).

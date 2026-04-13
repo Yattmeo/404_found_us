@@ -454,6 +454,18 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                         : 'Pending backend calculation'}
                     </p>
                   )}
+                  {orderedProfitRange && (
+                    <div className="mt-2">
+                      <p className="text-sm font-medium text-gray-500">Estimated annual profit (1 year):</p>
+                      <p className="text-xl font-bold">
+                        <span className={getAmountClass(orderedProfitRange.low * 4)}>
+                          {formatCurrency(orderedProfitRange.low * 4)}
+                        </span>
+                        <span className="text-gray-900"> - </span>
+                        <span className={getAmountClass(orderedProfitRange.high * 4)}>{formatCurrency(orderedProfitRange.high * 4)}</span>
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -585,6 +597,18 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                       ? formatCurrency(results.estimatedProfit)
                       : 'Pending backend calculation'}
                   </p>
+                )}
+                {orderedProfitRange && (
+                  <div className="mt-2">
+                    <p className="text-sm font-medium text-gray-500">Estimated annual profit (1 year):</p>
+                    <p className="text-2xl font-bold">
+                      <span className={getAmountClass(orderedProfitRange.low * 4)}>
+                        {formatCurrency(orderedProfitRange.low * 4)}
+                      </span>
+                      <span className="text-gray-900"> - </span>
+                      <span className={getAmountClass(orderedProfitRange.high * 4)}>{formatCurrency(orderedProfitRange.high * 4)}</span>
+                    </p>
+                  </div>
                 )}
               </div>
 

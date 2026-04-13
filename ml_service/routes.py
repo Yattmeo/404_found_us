@@ -317,13 +317,15 @@ def _weekly_features_to_m9_request(body: dict) -> CostForecastRequest:
         if flat_pool_mean is None:
             flat_pool_mean = fallback_mean
 
-    return CostForecastRequest(
+    req = CostForecastRequest(
         context_months=context_months,
         pool_mean_at_context_end=flat_pool_mean,
         knn_pool_mean_at_context_end=knn_pool_mean,
         peer_merchant_ids=peer_ids,
         mcc=mcc,
     )
+
+    return req
 
 
 def _m9_response_to_legacy(m9_resp: dict) -> dict:
@@ -386,10 +388,11 @@ def _cost_forecast_fallback_from_weekly(body: dict) -> dict | None:
 
     # Prefer the authoritative base_cost_rate from the backend's
     # cost-structure JSON calculation (a decimal, e.g. 0.0141 = 1.41%).
+    # Convert to percentage-scale to match M9 output convention.
     base_cost_rate = body.get("base_cost_rate")
 
     if base_cost_rate is not None and base_cost_rate > 0:
-        avg_cost = float(base_cost_rate)
+        avg_cost = float(base_cost_rate) * 100.0   # decimal → percentage
         # Use a small uncertainty band (±15 % of the rate) for CI.
         avg_stdev = avg_cost * 0.15
     else:
