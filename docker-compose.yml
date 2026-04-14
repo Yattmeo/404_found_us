@@ -87,6 +87,7 @@
       - TPV_ARTIFACTS_BASE_PATH=/app/artifacts/tpv
     volumes:
       - ./ml_service:/app
+      - ./ml_pipeline/Matt_EDA/services/KNN Quote Service Production/processed_transactions_4mcc.csv:/data/processed_transactions_4mcc.csv:ro
     depends_on:
       - postgres
     restart: unless-stopped

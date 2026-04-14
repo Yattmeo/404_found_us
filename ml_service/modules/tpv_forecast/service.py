@@ -430,9 +430,16 @@ def _build_risk_vector(
     ct_vals_list = []
     for m in context_months:
         if m.cost_type_pcts:
-            ct_vals_list.append(list(m.cost_type_pcts.values()))
+            ct_vals_list.append(m.cost_type_pcts)
     if ct_vals_list:
-        avg_ct = np.mean(ct_vals_list, axis=0)
+        # Months may have different cost-type keys; aggregate via a union
+        # of all keys so np.mean always sees equal-length arrays.
+        all_keys = sorted({k for d in ct_vals_list for k in d})
+        stacked = np.array(
+            [[d.get(k, 0.0) for k in all_keys] for d in ct_vals_list],
+            dtype=float,
+        )
+        avg_ct = np.mean(stacked, axis=0)
         cost_type_hhi = float(np.sum(avg_ct ** 2))
     else:
         cost_type_hhi = 1.0

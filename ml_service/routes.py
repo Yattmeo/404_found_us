@@ -234,6 +234,7 @@ async def get_composite_merchant_endpoint(payload: CompositeMerchantRequest):
     try:
         return run_get_composite_merchant(payload)
     except Exception as exc:
+        logger.exception("getCompositeMerchant failed for mcc=%s: %s", payload.mcc, exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
 
@@ -573,6 +574,7 @@ async def get_tpv_forecast_endpoint(payload: TPVForecastRequest):
     try:
         return run_tpv_forecast(payload)
     except Exception as exc:
+        logger.exception("GetTPVForecast failed for mcc=%s: %s", payload.mcc, exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
 

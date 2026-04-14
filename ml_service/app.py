@@ -33,6 +33,13 @@ async def lifespan(app: FastAPI):
     # Create tables on startup
     init_db()
 
+    # Seed knn_transactions from CSV if table is empty
+    try:
+        from seed_knn_data import seed_knn_transactions
+        seed_knn_transactions()
+    except Exception as exc:
+        logger.warning("[KNN Seed] Seeding skipped: %s", exc)
+
     # Initialize M9 cost forecast artifacts (graceful — warns if missing)
     try:
         from modules.cost_forecast.service import initialize as init_m9
