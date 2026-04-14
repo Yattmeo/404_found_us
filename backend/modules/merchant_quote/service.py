@@ -168,6 +168,8 @@ class MerchantQuoteService:
         base_cost_rate: float | None = None,
         fee_rate: float | None = None,
         target_margin: float | None = None,
+        fixed_fee_per_tx: float = 0.0,
+        avg_ticket: float | None = None,
     ) -> dict | None:
         if not onboarding_rows:
             return None
@@ -295,6 +297,10 @@ class MerchantQuoteService:
                                     "fee_rate": fee_rate,
                                     "mcc": mcc,
                             }
+                            if fixed_fee_per_tx > 0.0:
+                                profit_body["fixed_fee_per_tx"] = fixed_fee_per_tx
+                            if avg_ticket is not None and avg_ticket > 0.0:
+                                profit_body["avg_ticket"] = avg_ticket
                             if target_margin is not None:
                                 profit_body["target_margin"] = target_margin
                             profit_resp = client.post(

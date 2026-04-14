@@ -264,33 +264,78 @@ sequenceDiagram
     Note over MFE: Falls back to placeholder quote<br/>if backend/ML errors
 ```
 
-## Desired Margin Details Flow
+## Rates Quotation Tool — Data Flow
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'actorBkg': '#1B3A5C', 'actorTextColor': '#ffffff', 'actorBorder': '#1B3A5C', 'activationBorderColor': '#4A90D9', 'activationBkgColor': '#D6EAF8', 'signalColor': '#4A90D9', 'signalTextColor': '#1a1a2e', 'labelBoxBkgColor': '#4A90D9', 'labelBoxBorderColor': '#1B3A5C', 'labelTextColor': '#ffffff', 'noteBkgColor': '#E8F4FD', 'noteBorderColor': '#4A90D9', 'noteTextColor': '#1a1a2e', 'loopTextColor': '#1B3A5C', 'fontFamily': 'Segoe UI, sans-serif' }}}%%
-sequenceDiagram
-    actor User
-    participant FE as Sales Frontend
-    participant NG as Nginx :80
-    participant BE as Backend :8000
-    participant ML as ML Service :8001
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif' }, 'flowchart': { 'nodeSpacing': 20, 'rankSpacing': 30, 'padding': 10 }}}%%
+flowchart TB
+    U["User enters:<br/>MCC · Transactions CSV<br/>Desired Margin (bps) · [Current Rate] · [Fixed Fee]"]
+    FE["DesiredMarginCalculator.jsx"]
+    EP["POST /api/v1/calculations/desired-margin-details"]
+    COST["Backend: Calculate interchange<br/>& network costs from transactions"]
 
-    User->>FE: Enter MCC, card types, margin target
-    FE->>NG: POST /api/v1/calculations/desired-margin-details
-    NG->>BE: proxy → backend:8000
+    subgraph ML["ML Pipeline (4 sequential calls)"]
+        direction TB
+        KNN["① /ml/getCompositeMerchant<br/>KNN → 5 nearest merchants"]
+        TPV["② /ml/GetTPVForecast<br/>Conformal monthly TPV prediction"]
+        M9["③ /ml/GetCostForecast<br/>M9 v2 → 3-month cost %"]
+        MC["④ /ml/GetProfitForecast<br/>Monte Carlo simulation<br/>(uses cost + TPV + fee rate + fixed fee)"]
+        KNN --> TPV --> M9 --> MC
+    end
 
-    BE->>ML: POST /ml/getCompositeMerchant
-    ML-->>BE: composite profile + KNN neighbors
+    ASSEMBLE["Backend assembles:<br/>Recommended rate · Profitability curve<br/>Cost & volume forecasts · Estimated profit range"]
+    RES["DesiredMarginResults.jsx<br/>Charts: Cost Forecast · Volume Trend · Probability Curve"]
 
-    BE->>ML: POST /ml/GetCostForecast
-    ML-->>BE: monthly cost projection
+    U --> FE --> EP --> COST --> ML --> ASSEMBLE --> RES
 
-    BE->>ML: POST /ml/GetVolumeForecast
-    ML-->>BE: weekly volume projection
+    style U fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style FE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style EP fill:#1B3A5C,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style COST fill:#D6EAF8,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style ML fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style KNN fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style TPV fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style M9 fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style MC fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style ASSEMBLE fill:#D6EAF8,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style RES fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+```
 
-    BE->>BE: Calculate margin, recommended rate
-    BE-->>FE: margin details + ML context
-    FE-->>User: Display margin analysis
+## Profitability Calculator — Data Flow
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif' }, 'flowchart': { 'nodeSpacing': 20, 'rankSpacing': 30, 'padding': 10 }}}%%
+flowchart TB
+    U["User enters:<br/>MCC · Transactions CSV<br/>[Current Rate] · [Fixed Fee]<br/>(desired margin hardcoded 1.5%)"]
+    FE["EnhancedMerchantFeeCalculator.jsx"]
+    EP["POST /api/v1/calculations/desired-margin-details"]
+    COST["Backend: Calculate interchange<br/>& network costs from transactions"]
+
+    subgraph ML["ML Pipeline (same 4 calls)"]
+        direction TB
+        KNN["① /ml/getCompositeMerchant<br/>KNN → 5 nearest merchants"]
+        TPV["② /ml/GetTPVForecast<br/>Conformal monthly TPV prediction"]
+        M9["③ /ml/GetCostForecast<br/>M9 v2 → 3-month cost %"]
+        MC["④ /ml/GetProfitForecast<br/>Monte Carlo simulation<br/>(uses cost + TPV + fee rate + fixed fee)"]
+        KNN --> TPV --> M9 --> MC
+    end
+
+    ASSEMBLE["Backend assembles:<br/>Cost & volume forecasts · Profitability curve<br/>Estimated profit range · Key metrics"]
+    RES["ResultsPanel.jsx<br/>Charts: Cost Forecast · Volume Trend · Probability Curve<br/>+ Processing Volume · Fee Revenue · Annual Profit"]
+
+    U --> FE --> EP --> COST --> ML --> ASSEMBLE --> RES
+
+    style U fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style FE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style EP fill:#1B3A5C,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style COST fill:#D6EAF8,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style ML fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style KNN fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style TPV fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style M9 fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style MC fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style ASSEMBLE fill:#D6EAF8,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style RES fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
 ```
 
 ## Database Schema

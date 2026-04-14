@@ -103,6 +103,8 @@ def _simulate_profit_month(
     target_margin: float | None = None,
     cost_pct_ci_lower: float | None = None,
     cost_pct_ci_upper: float | None = None,
+    fixed_fee_per_tx: float = 0.0,
+    avg_ticket: float | None = None,
 ) -> ProfitMonth:
     z = norm.ppf((1 + confidence_interval) / 2)
 
@@ -123,8 +125,17 @@ def _simulate_profit_month(
     cost_samples = np.maximum(cost_samples, 0.0)
 
     revenue_samples = tpv_samples * fee_rate
+    # Add deterministic fixed-fee revenue: tx_count = TPV / avg_ticket
+    if fixed_fee_per_tx > 0.0 and avg_ticket is not None and avg_ticket > 0.0:
+        tx_count_samples = tpv_samples / avg_ticket
+        revenue_samples = revenue_samples + tx_count_samples * fixed_fee_per_tx
     cost_dollar_samples = tpv_samples * cost_samples
     profit_samples = revenue_samples - cost_dollar_samples
+
+    # Compute midpoint revenue including fixed fee for deterministic mid values
+    mid_tx_count = tpv_mid / avg_ticket if (avg_ticket is not None and avg_ticket > 0.0) else 0.0
+    mid_fixed_fee_revenue = mid_tx_count * fixed_fee_per_tx if fixed_fee_per_tx > 0.0 else 0.0
+    mid_revenue = tpv_mid * fee_rate + mid_fixed_fee_revenue
 
     alpha = 1 - confidence_interval
     lo_pct = 100 * (alpha / 2)
@@ -134,9 +145,9 @@ def _simulate_profit_month(
         month_index=0,
         tpv_mid=tpv_mid,
         cost_pct_mid=cost_pct_mid,
-        revenue_mid=tpv_mid * fee_rate,
+        revenue_mid=mid_revenue,
         cost_mid=tpv_mid * cost_pct_mid,
-        profit_mid=tpv_mid * (fee_rate - cost_pct_mid),
+        profit_mid=mid_revenue - tpv_mid * cost_pct_mid,
         margin_mid=fee_rate - cost_pct_mid,
         p_profitable=float((profit_samples > 0).mean()),
         profit_ci_lower=float(np.percentile(profit_samples, lo_pct)),
@@ -201,6 +212,8 @@ def get_profit_forecast(req: ProfitForecastRequest) -> ProfitForecastResponse:
             target_margin=req.target_margin,
             cost_pct_ci_lower=cost_ci_lower,
             cost_pct_ci_upper=cost_ci_upper,
+            fixed_fee_per_tx=req.fixed_fee_per_tx,
+            avg_ticket=req.avg_ticket,
         )
         pm.month_index = h + 1
         months.append(pm)

@@ -1,6 +1,6 @@
 # ML Service
 
-FastAPI microservice (`ml-service:8001`) — KNN rate quoting, cost forecasting, and volume forecasting.
+FastAPI microservice (`ml-service:8001`) — KNN rate quoting, cost/volume/profit forecasting, and Monte Carlo simulation.
 
 > Part of the **404 Found Us** platform. See the [root README](../README.md) for the full architecture.
 
@@ -16,8 +16,10 @@ All endpoints are prefixed with `/ml` by the nginx proxy.
 | POST | `/knn-rate-quote` | KNN Rate Quote | KNN-based processing cost forecast |
 | POST | `/getQuote` | KNN Quote Service | Match 5 similar merchants, return cost history |
 | POST | `/getCompositeMerchant` | KNN Quote Service | Match 5 merchants, return composite weekly features |
-| POST | `/GetCostForecast` | Cost Forecast (M9 v2) | 12-week cost forecast (M9 monthly → weekly interpolation) |
+| POST | `/GetCostForecast` | Cost Forecast (M9 v2) | 3-month cost forecast (M9 monthly → weekly interpolation) |
+| POST | `/GetTPVForecast` | TPV Forecast | Conformal monthly TPV prediction |
 | POST | `/GetVolumeForecast` | Volume Forecast | 12-week TPV forecast (SARIMA/SARIMAX) |
+| POST | `/GetProfitForecast` | Profit Forecast | Monte Carlo profit simulation (cost + TPV + fee rate + fixed fee) |
 | POST | `/rate-optimisation` | Rate Optimisation | Rate optimisation engine (stub) |
 | POST | `/tpv-prediction` | TPV Prediction | TPV prediction engine (stub) |
 | GET | `/cost-forecast/health` | Cost Forecast (M9 v2) | M9 health check |
@@ -31,13 +33,12 @@ Swagger docs: http://localhost/ml/docs
 ```
 ml_service/modules/
 ├── knn_rate_quote/       ✅ Implemented — KNN, PostgreSQL-backed
-├── cost_forecast/        ✅ Implemented — M9 v2 proxy + fallback
-├── volume_forecast/      ✅ Implemented — SARIMA weekly forecast
-├── m9_forecast/          ✅ Proxy layer to m9-forecast-service:8092
+├── cost_forecast/        ✅ Implemented — M9 v2 artifact-based cost prediction
+├── tpv_forecast/         ✅ Implemented — Conformal TPV prediction
+├── volume_forecast/      ✅ Implemented — SARIMAX weekly forecast
+├── profit_forecast/      ✅ Implemented — Monte Carlo profit simulation
 ├── rate_optimisation/    ⬜ Stub — implement your model
-├── tpv_prediction/       ⬜ Stub — implement your model
-├── cluster_generation/   ⬜ Scaffold — not wired to routes
-└── cluster_assignment/   ⬜ Scaffold — not wired to routes
+└── tpv_prediction/       ⬜ Stub — implement your model
 ```
 
 ### Cost Forecast Pipeline

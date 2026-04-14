@@ -75,6 +75,14 @@ class ProfitForecastRequest(BaseModel):
         ..., gt=0.0, lt=1.0,
         description="Merchant fee rate as a fraction of TPV (e.g. 0.029 = 2.9%).",
     )
+    fixed_fee_per_tx: float = Field(
+        default=0.0, ge=0.0,
+        description="Fixed per-transaction fee in dollars (e.g. 0.30). Added deterministically to revenue.",
+    )
+    avg_ticket: Optional[float] = Field(
+        default=None, gt=0.0,
+        description="Average transaction amount in dollars. Used to derive tx count from TPV for fixed-fee revenue.",
+    )
     mcc: int = Field(..., description="Merchant category code.")
     merchant_id: Optional[str] = Field(default=None)
     confidence_interval: float = Field(

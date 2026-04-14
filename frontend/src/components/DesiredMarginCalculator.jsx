@@ -282,19 +282,10 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
       // Send raw transaction rows so the ML service sees real variance
       const rawTransactions = Array.isArray(transactionData) ? transactionData : [];
 
-      const payload = {
-        mcc: data.mcc,
-        fixedFee: data.fixedFee === '' || data.fixedFee === undefined ? null : parseFloat(data.fixedFee),
-        currentRate: data.currentRate === '' || data.currentRate === undefined ? null : parseFloat(data.currentRate),
-        transactions: rawTransactions,
-      };
-
-      payload.fixed_fee = payload.fixedFee ?? 0.30;
-      payload.current_rate = payload.currentRate !== null && payload.currentRate !== undefined
-        ? payload.currentRate / 100
-        : null;
-      delete payload.fixedFee;
-      delete payload.currentRate;
+      const fixedFeeValue = data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
+        ? 0.0
+        : parseFloat(data.fixedFee);
+      const currentRateValue = hasCurrentRate ? parseFloat(data.currentRate) / 100 : null;
 
       const desiredMarginValue = data.desiredMargin
         ? parseFloat(data.desiredMargin) / 10000
@@ -302,16 +293,13 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
 
       const quotePayload = {
         mcc: data.mcc,
-        fixed_fee:
-          data.fixedFee === '' || data.fixedFee === undefined || data.fixedFee === null
-            ? 0.0
-            : payload.fixed_fee,
+        fixed_fee: Number.isFinite(fixedFeeValue) ? fixedFeeValue : 0.0,
         desired_margin: desiredMarginValue,
         transactions: rawTransactions,
       };
 
       if (hasCurrentRate) {
-        quotePayload.current_rate = payload.current_rate;
+        quotePayload.current_rate = currentRateValue;
       }
 
       const apiResults = await desiredMarginAPI.getDesiredMarginDetails(quotePayload);

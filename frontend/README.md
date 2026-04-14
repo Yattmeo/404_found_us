@@ -9,10 +9,18 @@ React application for merchant fee calculation and profitability analysis. Serve
 ## Tools
 
 ### Merchant Profitability Calculator
-Upload transaction CSV or enter manually → calculates interchange & network fees → shows profitability metrics, cost forecast chart, volume trend, and probability curve.
+Upload transaction CSV or enter manually → optionally set current rate and fixed fee → calculates interchange & network fees via ML pipeline (KNN + TPV + cost + profit forecast) → shows profitability metrics, cost forecast chart, volume trend, and probability curve.
+
+- **Component**: `EnhancedMerchantFeeCalculator.jsx` → `ResultsPanel.jsx`
+- **Endpoint**: `POST /api/v1/calculations/desired-margin-details` (desired margin hardcoded at 1.5%)
 
 ### Rates Quotation Tool
-Upload merchant transaction history → set desired profit margin → get recommended rate with ML-driven cost forecast (12-week), volume forecast (12-week), and profitability probability curve.
+Upload merchant transaction history → set desired profit margin (bps) → optionally set current rate and fixed fee → get recommended rate with ML-driven cost forecast, volume forecast, Monte Carlo profit simulation, and profitability probability curve.
+
+- **Component**: `DesiredMarginCalculator.jsx` → `DesiredMarginResults.jsx`
+- **Endpoint**: `POST /api/v1/calculations/desired-margin-details`
+
+> Both tools share the same backend endpoint and ML pipeline (4 sequential ML service calls). See [ARCHITECTURE.md](../ARCHITECTURE.md) for detailed data flow diagrams.
 
 ---
 
@@ -32,10 +40,10 @@ Upload merchant transaction history → set desired profit margin → get recomm
 ```
 src/components/
 ├── LandingPage.jsx                      Navigation / tool selection
-├── EnhancedMerchantFeeCalculator.jsx    Current Rates tool (input + results)
-├── DesiredMarginCalculator.jsx          Desired Margin tool (input)
-├── DesiredMarginResults.jsx             Desired Margin results + charts
+├── EnhancedMerchantFeeCalculator.jsx    Profitability Calculator (input)
 ├── ResultsPanel.jsx                     Profitability Calculator results + charts
+├── DesiredMarginCalculator.jsx          Rates Quotation tool (input)
+├── DesiredMarginResults.jsx             Rates Quotation results + charts
 ├── DataUploadValidator.jsx              CSV/Excel upload with validation
 ├── ManualTransactionEntry.jsx           Manual transaction entry form
 ├── MCCDropdown.jsx                      MCC code selector

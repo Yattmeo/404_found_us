@@ -534,7 +534,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Expected revenue in the next 3 months</p>
+                      <p className="text-sm text-gray-600">Expected processing volume in the next 3 months</p>
                       <p className="text-2xl font-bold text-gray-900">
                         {(() => {
                           const monthlyVolume = Number(results.processingVolume || results.expectedVolume || 0);
@@ -545,6 +545,20 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                           return `${formatCurrency(lower)} - ${formatCurrency(upper)}`;
                         })()}
                       </p>
+                      {(() => {
+                        const monthlyVolume = Number(results.processingVolume || results.expectedVolume || 0);
+                        const rate = Number(results.suggestedRate);
+                        if (!monthlyVolume || !Number.isFinite(rate) || rate <= 0) return null;
+                        const threeMonth = monthlyVolume * 3;
+                        const lower = threeMonth * 0.75 * (rate / 100);
+                        const upper = threeMonth * 1.25 * (rate / 100);
+                        return (
+                          <div className="mt-1">
+                            <p className="text-xs text-gray-500">Expected fee revenue (3 months):</p>
+                            <p className="text-lg font-bold text-[#17a455]">{formatCurrency(lower)} - {formatCurrency(upper)}</p>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -613,7 +627,7 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
               </div>
 
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <p className="text-sm font-medium text-gray-700 mb-2">Expected revenue in the next 3 months:</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">Expected processing volume in the next 3 months:</p>
                 <p className="text-4xl font-bold text-gray-900">
                   {(() => {
                     const monthlyVolume = Number(results.processingVolume || results.expectedVolume || 0);
@@ -624,6 +638,20 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                     return `${formatCurrency(lower)} - ${formatCurrency(upper)}`;
                   })()}
                 </p>
+                {(() => {
+                  const monthlyVolume = Number(results.processingVolume || results.expectedVolume || 0);
+                  const rate = Number(results.suggestedRate);
+                  if (!monthlyVolume || !Number.isFinite(rate) || rate <= 0) return null;
+                  const threeMonth = monthlyVolume * 3;
+                  const lower = threeMonth * 0.75 * (rate / 100);
+                  const upper = threeMonth * 1.25 * (rate / 100);
+                  return (
+                    <div className="mt-2">
+                      <p className="text-sm font-medium text-gray-500">Expected fee revenue (3 months):</p>
+                      <p className="text-2xl font-bold text-[#17a455]">{formatCurrency(lower)} - {formatCurrency(upper)}</p>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 

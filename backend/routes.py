@@ -579,6 +579,8 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
         base_cost_rate=float(base_cost_rate) if base_cost_rate is not None else None,
         fee_rate=recommended_rate if recommended_rate > 0 else None,
         target_margin=desired_margin,
+        fixed_fee_per_tx=float(result.get("minimum_fee") or 0.0),
+        avg_ticket=float(result.get("average_ticket") or 0.0) or None,
     )
 
     def _safe_float(value: object, default: float = 0.0) -> float:
@@ -761,30 +763,41 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
                 if c["upper"] > c["lower"]
             ]
             z_90 = 1.6449  # norm.ppf(0.95)
+            # The minimum sigma must be large enough that the S-curve
+            # transition zone overlaps the rate grid (1.5% – 3.5%).
+            # Use 30% of avg_cost_mid so the ±2σ region spans ~60% of
+            # the cost value, keeping the curve visually informative
+            # even when the CI from M9 is very tight.
+            min_sigma = max(avg_cost_mid * 0.30, 0.0020)
             if cost_hw_values:
                 spread_sigma = max(
-                    (sum(cost_hw_values) / len(cost_hw_values)) / z_90, 0.0015
+                    (sum(cost_hw_values) / len(cost_hw_values)) / z_90, min_sigma
                 )
             else:
-                spread_sigma = max(avg_cost_mid * 0.15, 0.0015)
+                spread_sigma = max(avg_cost_mid * 0.15, min_sigma)
 
             # The curve center is the average cost — at rate = avg_cost_mid,
             # there's a 50% chance cost will be below the rate.
             effective_break_even = avg_cost_mid
 
-            # Build a dynamic rate grid that covers 1.5% → max(3.5%, recommended + 0.5%)
-            # with extra density around the break-even zone for a smooth S-curve.
+            # Build a dynamic rate grid.
+            # Start low enough to show the S-curve transition around break-even,
+            # and go up to max(3.5%, recommended + 0.5%).
             grid_max = max(3.50, round(recommended_rate * 100.0, 2) + 0.50)
+            be_pct = effective_break_even * 100.0
+            # Start grid at min(1.5%, be - 0.50%) so the S-curve is visible
+            # even when the cost (break-even) is well below 1.5%.
+            grid_min = min(1.50, max(0.25, be_pct - 0.50))
+            grid_min = round(grid_min * 4) / 4  # snap to nearest 0.25
             base_grid = set()
             # Coarse: every 0.25% across the full range
             step = 0.25
-            v = 1.50
+            v = grid_min
             while v <= grid_max + 1e-9:
                 base_grid.add(round(v, 2))
                 v += step
             # Dense: every 0.10% within ±0.50% of effective_break_even
-            be_pct = effective_break_even * 100.0
-            dense_lo = max(1.50, be_pct - 0.50)
+            dense_lo = max(grid_min, be_pct - 0.50)
             dense_hi = min(grid_max, be_pct + 0.50)
             v = dense_lo
             while v <= dense_hi + 1e-9:
@@ -1015,15 +1028,21 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
     }
 
     # When ML cost forecast is available, derive suggested rate and margin
-    # from the forecast data: suggested_rate = max(prediction_interval_top,
-    # mean(cost) + desired_margin); margin = suggested_rate - mean(cost).
-    if cost_series and current_rate is None:
+    # from the forecast data.  The ML cost is more accurate than the static
+    # cost-structure base rate, so always prefer it for margin.
+    if cost_series:
         mean_cost = sum(c["mid"] for c in cost_series) / len(cost_series)
-        prediction_interval_top = sum(c["upper"] for c in cost_series) / len(cost_series)
-        forecast_suggested_rate = max(prediction_interval_top, mean_cost + desired_margin)
-        forecast_margin = forecast_suggested_rate - mean_cost
-        summary["suggested_rate_pct"] = round(forecast_suggested_rate * 100.0, 2)
-        summary["margin_bps"] = int(round(forecast_margin * 10000.0))
+        if current_rate is not None:
+            # User provided their rate — keep it, but recompute margin
+            # against the ML-forecasted cost (not the static base rate).
+            summary["margin_bps"] = int(round((recommended_rate - mean_cost) * 10000.0))
+        else:
+            # No user rate — derive suggested rate from forecast.
+            prediction_interval_top = sum(c["upper"] for c in cost_series) / len(cost_series)
+            forecast_suggested_rate = max(prediction_interval_top, mean_cost + desired_margin)
+            forecast_margin = forecast_suggested_rate - mean_cost
+            summary["suggested_rate_pct"] = round(forecast_suggested_rate * 100.0, 2)
+            summary["margin_bps"] = int(round(forecast_margin * 10000.0))
 
     return {
         "status": "success",

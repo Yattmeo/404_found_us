@@ -41,26 +41,51 @@ Merchant pricing intelligence platform. Calculates interchange & network fees, f
                     └──────────┘              └──────────────┘
 ```
 
-### Data Flow — Rate Quotation
+### Data Flow — Rates Quotation Tool
 
 ```
-User submits transactions
+User: MCC + Transactions CSV + Desired Margin (bps) + [Current Rate] + [Fixed Fee]
+        │
+        ▼
+  DesiredMarginCalculator.jsx
         │
         ▼
   Backend /api/v1/calculations/desired-margin-details
         │
-        ├──► ML Service /ml/getCompositeMerchant     (KNN: 5 nearest merchants)
+        ├─► Calculate interchange & network costs from transactions
         │
-        ├──► ML Service /ml/GetCostForecast           (M9 v2 → 12 weekly cost %)
+        ├─► ML Service /ml/getCompositeMerchant     (KNN: 5 nearest merchants)
         │
-        ├──► ML Service /ml/GetVolumeForecast         (SARIMAX → 12 weekly TPV $)
+        ├─► ML Service /ml/GetTPVForecast            (Conformal monthly TPV prediction)
+        │
+        ├─► ML Service /ml/GetCostForecast           (M9 v2 → 3-month cost %)
+        │
+        ├─► ML Service /ml/GetProfitForecast         (Monte Carlo: cost + TPV + fee + fixed fee)
         │
         ▼
-  Backend pairs 12 cost + 12 volume weeks
-  → profitability curve, estimated profit, recommended rate
+  Backend assembles: recommended rate, profitability curve,
+  cost & volume forecasts, estimated profit range
         │
         ▼
-  Frontend renders charts: Cost Forecast, Volume Trend, Probability Curve
+  DesiredMarginResults.jsx — Charts: Cost Forecast, Volume Trend, Probability Curve
+```
+
+### Data Flow — Profitability Calculator
+
+```
+User: MCC + Transactions CSV + [Current Rate] + [Fixed Fee]
+        │  (desired margin hardcoded at 1.5%)
+        ▼
+  EnhancedMerchantFeeCalculator.jsx
+        │
+        ▼
+  Backend /api/v1/calculations/desired-margin-details
+        │
+        │  (Same ML pipeline as Rates Quotation — 4 sequential ML calls)
+        │
+        ▼
+  ResultsPanel.jsx — Charts: Cost Forecast, Volume Trend, Probability Curve
+                   + Processing Volume, Fee Revenue, Annual Profit
 ```
 
 ---
