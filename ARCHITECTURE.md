@@ -3,7 +3,7 @@
 ## System Overview
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 25, 'rankSpacing': 45, 'padding': 12 }}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 20, 'rankSpacing': 28, 'padding': 8 }}}%%
 graph LR
     USER(("Browser<br/>(User)"))
 
@@ -28,7 +28,7 @@ graph LR
 
     subgraph DataLayer["  "]
         direction TB
-        CS["FEE SCHEDULES<br/>Visa & Mastercard JSONs"]
+        CS["COST STRUCT JSON<br/>Visa & Mastercard JSONs"]
         DB[("Database<br/>(SQLAlchemy)")]
         DB1[("knn_transactions")]
         DB2[("knn_cost_type_ref")]
