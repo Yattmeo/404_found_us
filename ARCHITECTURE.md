@@ -3,13 +3,13 @@
 ## System Overview
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '14px' }, 'flowchart': { 'nodeSpacing': 30, 'rankSpacing': 60, 'padding': 14 }}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 25, 'rankSpacing': 45, 'padding': 12 }}}%%
 graph LR
-    USER(("Browser<br/>(User)"))
+    USER(("Browser\n(User)"))
 
     USER -->|http| NG
 
-    NG["CENTRAL PLATFORM GATEWAY<br/>Nginx :80 · nginx:alpine"]
+    NG["CENTRAL PLATFORM GATEWAY\nNginx :80 · nginx:alpine"]
 
     NG -->|"/sales/*"| FE
     NG -->|"/api/*"| BE
@@ -17,21 +17,21 @@ graph LR
 
     subgraph Services["  "]
         direction TB
-        FE["sales-frontend :3000<br/><b>INTERNAL SALES PORTAL</b><br/>React CRA"]
-        BE["backend :8000<br/><b>COST CALCULATOR</b><br/>FastAPI · TransactionCostCalc"]
-        MFE["merchant-frontend :3001<br/><b>MERCHANT SELF-SERVICE</b><br/>Vite + React + TS"]
+        FE["sales-frontend :3000\nINTERNAL SALES PORTAL\nReact CRA"]
+        BE["backend :8000\nCOST CALCULATOR\nFastAPI"]
+        MFE["merchant-frontend :3001\nMERCHANT SELF-SERVICE\nVite + React + TS"]
     end
 
     BE -->|httpx| MLS
 
     subgraph RightSide["  "]
         direction TB
-        MLS["ml-service :8001<br/><b>PREDICTION ENGINE</b><br/>KNN Rate Quote · Cost Forecast<br/>TPV Forecast · Profit Forecast<br/>Rate Optimisation · Monte Carlo"]
+        MLS["ml-service :8001\nPREDICTION ENGINE\nKNN · Cost · TPV Forecast\nProfit · Rate Opt · Monte Carlo"]
 
         subgraph DataLayer["  "]
             direction LR
-            CS["COST STRUCTURE JSONs<br/>Visa & Mastercard<br/>fee rules and rates"]
-            DB[("Database<br/>(SQLAlchemy)")]
+            CS["COST STRUCTURE JSONs\nVisa & Mastercard fees"]
+            DB[("Database\n(SQLAlchemy)")]
         end
 
         subgraph Tables["  "]
