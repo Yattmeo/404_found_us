@@ -325,7 +325,7 @@ const ProbabilityMiniChart = ({
   );
 };
 
-const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
+const ResultsPanel = ({ results, hasCurrentRate, currentRateInput, onNewCalculation }) => {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
 
   if (!results) {
@@ -387,6 +387,20 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
     return raw;
   })();
 
+  // When a current rate is provided, derive a suggested rate from the
+  // cost forecast's prediction interval top — the same value the backend
+  // uses for suggested_rate_pct when no current rate is given.
+  const curveSuggestedRate = (() => {
+    if (!hasCurrentRate) return null;
+    const costSeries = results.costForecast;
+    if (!Array.isArray(costSeries) || costSeries.length === 0) return null;
+    const meanCost = costSeries.reduce((s, c) => s + Number(c.mid || 0), 0) / costSeries.length;
+    const predictionIntervalTop = costSeries.reduce((s, c) => s + Number(c.upper || 0), 0) / costSeries.length;
+    const desiredMargin = 0.015;
+    const forecastSuggestedRate = Math.max(predictionIntervalTop, meanCost + desiredMargin);
+    return Math.round(forecastSuggestedRate * 10000) / 100; // convert to percentage with 2 decimals
+  })();
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
@@ -420,12 +434,6 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                         : 'Pending backend calculation'}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-gray-700">Target Margin Met:</p>
-                    <p className={`text-2xl font-bold ${results.targetMarginMet === true ? 'text-[#17a455]' : results.targetMarginMet === false ? 'text-red-600' : 'text-gray-400'}`}>
-                      {results.targetMarginMet === true ? 'Yes' : results.targetMarginMet === false ? 'No' : 'N/A'}
-                    </p>
-                  </div>
                 </div>
                 
                 <div>
@@ -455,30 +463,30 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                         : 'Pending backend calculation'}
                     </p>
                   )}
-                  {orderedProfitRange && (
-                    <div className="mt-2">
-                      <p className="text-sm font-medium text-gray-500">Estimated annual profit (1 year):</p>
-                      <p className="text-xl font-bold">
-                        <span className={getAmountClass(orderedProfitRange.low * 4)}>
-                          {formatCurrency(orderedProfitRange.low * 4)}
-                        </span>
-                        <span className="text-gray-900"> - </span>
-                        <span className={getAmountClass(orderedProfitRange.high * 4)}>{formatCurrency(orderedProfitRange.high * 4)}</span>
-                      </p>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
 
-            {/* Current Rate (or Suggested Rate when no current rate entered) */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-              <p className="text-sm font-medium text-gray-700 mb-2">Current Rate:</p>
-              <p className="text-4xl font-bold text-gray-900">
-                {results.suggestedRate !== null && results.suggestedRate !== undefined
-                  ? `${Number(results.suggestedRate).toFixed(2)}%`
-                  : 'Pending backend calculation'}
-              </p>
+            {/* Current Rate and Suggested Rate */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                <p className="text-sm font-medium text-gray-700 mb-2">Current Rate:</p>
+                <p className="text-4xl font-bold text-gray-900">
+                  {currentRateInput
+                    ? `${Number(currentRateInput).toFixed(2)}%`
+                    : 'N/A'}
+                </p>
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
+                <p className="text-4xl font-bold text-[#17a455]">
+                  {curveSuggestedRate !== null
+                    ? `${Number(curveSuggestedRate).toFixed(2)}%`
+                    : (results.suggestedRate !== null && results.suggestedRate !== undefined
+                      ? `${Number(results.suggestedRate).toFixed(2)}%`
+                      : 'Pending backend calculation')}
+                </p>
+              </div>
             </div>
 
             {/* More Details Button */}
@@ -581,12 +589,6 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                       {results.suggestedRate !== null && results.suggestedRate !== undefined ? `${Number(results.suggestedRate).toFixed(2)}%` : 'Pending backend calculation'}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-gray-700 mb-2">Target Margin Met:</p>
-                    <p className={`text-4xl font-bold ${results.targetMarginMet === true ? 'text-[#17a455]' : results.targetMarginMet === false ? 'text-red-600' : 'text-gray-400'}`}>
-                      {results.targetMarginMet === true ? 'Yes' : results.targetMarginMet === false ? 'No' : 'N/A'}
-                    </p>
-                  </div>
                 </div>
               </div>
 
@@ -614,18 +616,6 @@ const ResultsPanel = ({ results, hasCurrentRate, onNewCalculation }) => {
                       ? formatCurrency(results.estimatedProfit)
                       : 'Pending backend calculation'}
                   </p>
-                )}
-                {orderedProfitRange && (
-                  <div className="mt-2">
-                    <p className="text-sm font-medium text-gray-500">Estimated annual profit (1 year):</p>
-                    <p className="text-2xl font-bold">
-                      <span className={getAmountClass(orderedProfitRange.low * 4)}>
-                        {formatCurrency(orderedProfitRange.low * 4)}
-                      </span>
-                      <span className="text-gray-900"> - </span>
-                      <span className={getAmountClass(orderedProfitRange.high * 4)}>{formatCurrency(orderedProfitRange.high * 4)}</span>
-                    </p>
-                  </div>
                 )}
               </div>
 

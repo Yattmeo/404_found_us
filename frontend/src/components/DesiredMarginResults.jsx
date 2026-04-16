@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
 
-const DesiredMarginResults = ({ results, onNewCalculation }) => {
+const DesiredMarginResults = ({ results, hasCurrentRate, currentRateInput, onNewCalculation }) => {
   const [showDetails, setShowDetails] = useState(false);
 
   if (!results) {
@@ -412,6 +412,20 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
 
   const costSeries = toMonthlyCostSeries(results.costForecast || []);
 
+  // When a current rate is provided, derive a suggested rate from the
+  // cost forecast's prediction interval top — same as the backend uses
+  // for suggested_rate_pct when no current rate is given.
+  const curveSuggestedRate = (() => {
+    if (!hasCurrentRate) return null;
+    const forecast = results.costForecast;
+    if (!Array.isArray(forecast) || forecast.length === 0) return null;
+    const meanCost = forecast.reduce((s, c) => s + Number(c.mid || 0), 0) / forecast.length;
+    const predictionIntervalTop = forecast.reduce((s, c) => s + Number(c.upper || 0), 0) / forecast.length;
+    const desiredMargin = 0.015;
+    const forecastSuggestedRate = Math.max(predictionIntervalTop, meanCost + desiredMargin);
+    return Math.round(forecastSuggestedRate * 10000) / 100;
+  })();
+
   const volumeSeries = toMonthlyVolumeSeries(results.volumeForecast || []);
 
   const directCurvePoints = (() => {
@@ -463,14 +477,37 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
         </div>
 
         <div className="space-y-5">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-            <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
-            <p className="text-4xl font-bold text-[#17a455]">
-              {suggestedRate !== null && suggestedRate !== undefined
-                ? `${Number(suggestedRate).toFixed(2)}%`
-                : <span className="text-xl text-gray-400">Pending backend calculation</span>}
-            </p>
-          </div>
+          {hasCurrentRate ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                <p className="text-sm font-medium text-gray-700 mb-2">Current Rate:</p>
+                <p className="text-4xl font-bold text-gray-900">
+                  {currentRateInput
+                    ? `${Number(currentRateInput).toFixed(2)}%`
+                    : 'N/A'}
+                </p>
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
+                <p className="text-4xl font-bold text-[#17a455]">
+                  {curveSuggestedRate !== null
+                    ? `${Number(curveSuggestedRate).toFixed(2)}%`
+                    : (suggestedRate !== null && suggestedRate !== undefined
+                      ? `${Number(suggestedRate).toFixed(2)}%`
+                      : <span className="text-xl text-gray-400">Pending backend calculation</span>)}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <p className="text-sm font-medium text-gray-700 mb-2">Suggested Rate:</p>
+              <p className="text-4xl font-bold text-[#17a455]">
+                {suggestedRate !== null && suggestedRate !== undefined
+                  ? `${Number(suggestedRate).toFixed(2)}%`
+                  : <span className="text-xl text-gray-400">Pending backend calculation</span>}
+              </p>
+            </div>
+          )}
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
             <p className="text-sm font-medium text-gray-700 mb-2">Margin (in bps):</p>
@@ -489,14 +526,6 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                 ? estimatedProfitRange
                 : <span className="text-xl text-gray-400">Pending backend calculation</span>}
             </p>
-            {results.estimatedProfitMin != null && results.estimatedProfitMax != null && (
-              <div className="mt-2">
-                <p className="text-sm font-medium text-gray-500">Estimated annual profit (1 year):</p>
-                <p className={`text-2xl font-bold ${isEstimatedProfitNegative ? 'text-red-600' : 'text-[#17a455]'}`}>
-                  {formatCurrencyRange(results.estimatedProfitMin * 4, results.estimatedProfitMax * 4)}
-                </p>
-              </div>
-            )}
           </div>
 
           <button

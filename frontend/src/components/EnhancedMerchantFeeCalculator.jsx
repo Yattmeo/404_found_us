@@ -375,7 +375,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
 
   // Show results page if results exist
   if (results) {
-    return <ResultsPanel results={results} hasCurrentRate={!!currentRate} onNewCalculation={handleNewCalculation} />;
+    return <ResultsPanel results={results} hasCurrentRate={!!currentRate} currentRateInput={currentRate} onNewCalculation={handleNewCalculation} />;
   }
 
   // Show form page

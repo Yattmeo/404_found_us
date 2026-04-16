@@ -358,7 +358,7 @@ const DesiredMarginCalculator = ({ onBackToLanding }) => {
   };
 
   if (results) {
-    return <DesiredMarginResults results={results} onNewCalculation={handleNewCalculation} />;
+    return <DesiredMarginResults results={results} hasCurrentRate={!!currentRate} currentRateInput={currentRate} onNewCalculation={handleNewCalculation} />;
   }
 
   return (
