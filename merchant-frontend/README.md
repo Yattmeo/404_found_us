@@ -12,6 +12,7 @@ Self-service quotation tool for merchants. The user fills in business details (i
 
 - **Form → Result** two-step flow
 - Calls `POST /api/v1/merchant-quote` with business data
+- Backend calls `POST /ml/knn-rate-quote` — finds 5 nearest peer merchants by transaction profile and derives a rate range from their historical processing costs (+30 bps margin). Online rate = in-person + 0.1pp.
 - Falls back to a client-side placeholder quote if the backend/ML service is unavailable
 
 ---

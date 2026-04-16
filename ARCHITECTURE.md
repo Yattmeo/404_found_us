@@ -250,22 +250,15 @@ sequenceDiagram
     MFE->>NG: POST /api/v1/merchant-quote
     NG->>BE: proxy → backend:8000
 
-    BE->>ML: POST /ml/getCompositeMerchant
-    ML-->>BE: composite merchant profile
+    BE->>ML: POST /ml/knn-rate-quote
+    Note over BE,ML: mcc · card_type · monthly_txn_count · avg_amount
+    ML-->>BE: forecast_proc_cost (historical cost distribution)
+    BE->>BE: min/max cost + 30 bps margin → in_person_rate_range<br/>online_rate_range = in_person + 0.1pp
 
-    BE->>ML: POST /ml/GetTPVForecast
-    ML-->>BE: conformal monthly TPV prediction
-
-    BE->>ML: POST /ml/GetCostForecast
-    ML-->>BE: 3-month cost forecast (M9 v2)
-
-    BE->>ML: POST /ml/GetProfitForecast
-    ML-->>BE: Monte Carlo profit simulation
-
-    BE-->>MFE: QuoteResult (rates, charges, ml_insights)
+    BE-->>MFE: QuoteResult (rates, charges, quote_summary)
     MFE-->>User: Display quotation
 
-    Note over MFE: Falls back to placeholder quote<br/>if backend/ML errors
+    Note over MFE: Falls back to client-side placeholder quote<br/>if backend/ML service is unavailable
 ```
 
 ## Rates Quotation Tool — Data Flow
