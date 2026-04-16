@@ -622,23 +622,15 @@ flowchart LR
     subgraph MFE["merchant-frontend :3001  ·  Vite + React + TS"]
         direction TB
         QF["QuotationForm.tsx\n─────────────────────\nMerchant Name · MCC\nMonthly Txns · Avg Ticket\nPayment Brands"]
-        QR["QuotationResult.tsx\n─────────────────────\nin_person_rate_range\nonline_rate_range\nCharges & monthly fees\nml_insights: cost band\nml_insights: volume band"]
+        QR["QuotationResult.tsx\n─────────────────────\nin_person_rate_range\nonline_rate_range\nCharges & monthly fees\nQuote summary"]
     end
 
     subgraph BE["backend :8000  ·  FastAPI\nPOST /api/v1/merchant-quote\nMerchantQuoteService"]
-        direction TB
-        KNN_RATE["① knn-rate-quote\nKNN peers → historical cost dist.\n+ 30 bps margin\n→ in_person_rate_range\nonline = in-person + 0.1pp"]
-        INSIGHTS["② forecast pipeline\n(informational only)"]
-        KNN_RATE --> INSIGHTS
+        KNN_RATE["knn-rate-quote\nKNN peers → historical cost dist.\n+ 30 bps margin\n→ in_person_rate_range\nonline = in-person + 0.1pp"]
     end
 
     subgraph ML["ml-service :8001"]
-        direction TB
         KR["POST /ml/knn-rate-quote\nmcc · card_type · monthly_txn_count\navg_amount · as_of_date\n→ forecast_proc_cost list"]
-        GCM["POST /ml/getCompositeMerchant\n→ weekly_features · k · end_month"]
-        TPV["POST /ml/GetTPVForecast\n→ tpv_mid / ci_lower / ci_upper"]
-        CF["POST /ml/GetCostForecast\nM9 v2\n→ proc_cost_pct bands"]
-        GCM --> TPV --> CF
     end
 
     U        -->|"http"| NG
@@ -647,9 +639,7 @@ flowchart LR
     NG       -->|"/api  proxy"| KNN_RATE
     KNN_RATE -->|"mcc · card_type · avg_ticket"| KR
     KR       -->|"rate range"| KNN_RATE
-    INSIGHTS -->|"onboarding rows · mcc"| GCM
-    CF       -->|"cost_forecast_week_1\nvolume_forecast_week_1"| INSIGHTS
-    INSIGHTS -->|"ml_insights"| QR
+    KNN_RATE -->|"QuoteResult JSON"| QR
     QR       -->|"rendered page"| U
 
     style U        fill:#ffffff,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
@@ -659,12 +649,8 @@ flowchart LR
     style QR       fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style BE       fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style KNN_RATE fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style INSIGHTS fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style ML       fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
     style KR       fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style GCM      fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style TPV      fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style CF       fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
 
     linkStyle default stroke:#4A90D9,stroke-width:2px
 ```
