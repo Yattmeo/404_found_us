@@ -184,7 +184,7 @@ const ProbabilityMiniChart = ({
 
   const width = 560;
   const height = 260;
-  const left = 46;
+  const left = 60;
   const right = 18;
   const top = 18;
   const bottom = 36;

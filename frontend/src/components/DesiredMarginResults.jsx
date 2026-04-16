@@ -559,7 +559,7 @@ const DesiredMarginResults = ({ results, onNewCalculation }) => {
                   );
                 }
 
-                const w = 560, h = 260, l = 46, r = 18, t = 18, b = 36;
+                const w = 560, h = 260, l = 60, r = 18, t = 18, b = 36;
                 const uw = w - l - r, uh = h - t - b;
                 const minX = Math.min(...chartPoints.map((p) => p.x));
                 const maxX = Math.max(...chartPoints.map((p) => p.x));
