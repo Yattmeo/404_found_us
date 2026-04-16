@@ -613,11 +613,11 @@ Each diagram traces a single user journey from browser through every service lay
 ### 1 — Merchant Calculator · `localhost/merchant/`
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 18, 'rankSpacing': 32, 'padding': 10 }}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 28, 'rankSpacing': 60, 'padding': 16 }}}%%
 flowchart LR
     U(["Browser\nlocalhost/merchant/"])
 
-    NG["GATEWAY\nNginx :80\n─────────────\n/merchant → :3001\n/api     → :8000"]
+    NG["GATEWAY\nNginx :80\n─────────────\n/merchant → :3001\n/api → :8000"]
 
     subgraph MFE["merchant-frontend :3001  ·  Vite + React + TS"]
         direction TB
@@ -625,21 +625,21 @@ flowchart LR
         QR["QuotationResult.tsx\n─────────────────────\nin_person_rate_range\nonline_rate_range\nCharges & monthly fees\nQuote summary"]
     end
 
-    subgraph BE["backend :8000  ·  FastAPI\nPOST /api/v1/merchant-quote\nMerchantQuoteService"]
-        KNN_RATE["knn-rate-quote\nKNN peers → historical cost dist.\n+ 30 bps margin\n→ in_person_rate_range\nonline = in-person + 0.1pp"]
+    subgraph BE["backend :8000  ·  FastAPI"]
+        KNN_RATE["POST /api/v1/merchant-quote\n─────────────────────────\nknn-rate-quote\nKNN peers → historical cost dist.\n+ 30 bps margin\n→ in_person_rate_range\nonline = in-person + 0.1pp"]
     end
 
     subgraph ML["ml-service :8001"]
-        KR["POST /ml/knn-rate-quote\nmcc · card_type · monthly_txn_count\navg_amount · as_of_date\n→ forecast_proc_cost list"]
+        KR["POST /ml/knn-rate-quote\n────────────────────────\nmcc · card_type\nmonthly_txn_count · avg_amount\nas_of_date\n→ forecast_proc_cost list"]
     end
 
     U        -->|"http"| NG
-    NG       -->|"/merchant  serve UI"| QF
-    QF       -->|"POST payload"| NG
-    NG       -->|"/api  proxy"| KNN_RATE
+    NG       -->|"serve UI"| QF
+    QF       -->|"form POST"| NG
+    NG       -->|"proxy /api"| KNN_RATE
     KNN_RATE -->|"mcc · card_type · avg_ticket"| KR
     KR       -->|"rate range"| KNN_RATE
-    KNN_RATE -->|"QuoteResult JSON"| QR
+    KNN_RATE -->|"JSON response"| QR
     QR       -->|"rendered page"| U
 
     style U        fill:#ffffff,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
