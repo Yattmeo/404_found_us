@@ -3,53 +3,51 @@
 ## System Overview
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '16px' }, 'flowchart': { 'nodeSpacing': 40, 'rankSpacing': 50, 'padding': 16 }}}%%
-graph TB
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '14px' }, 'flowchart': { 'nodeSpacing': 30, 'rankSpacing': 60, 'padding': 14 }}}%%
+graph LR
     USER(("Browser<br/>(User)"))
 
     USER -->|http| NG
 
-    NG["CENTRAL PLATFORM GATEWAY<br/>Nginx :80<br/>Reverse Proxy · nginx:alpine"]
+    NG["CENTRAL PLATFORM GATEWAY<br/>Nginx :80 · nginx:alpine"]
 
     NG -->|"/sales/*"| FE
     NG -->|"/api/*"| BE
-    NG -->|"/ml/*"| MLS
     NG -->|"/merchant/*"| MFE
 
     subgraph Services["  "]
-        direction LR
-        FE["sales-frontend :3000<br/><b>INTERNAL SALES PORTAL</b><br/>built with React CRA"]
-        BE["backend :8000<br/><b>COST CALCULATOR</b><br/>calculates processing costs<br/>powered by FastAPI<br/>(TransactionCostCalc)"]
-        MLS["ml-service :8001<br/><b>PREDICTION ENGINE</b><br/>FastAPI · KNN Rate Quote<br/>Cost Forecast · TPV Forecast<br/>Profit Forecast · Rate Optimisation<br/>TPV Prediction · Monte Carlo"]
-        MFE["merchant-frontend :3001<br/><b>MERCHANT SELF-SERVICE</b><br/>built with Vite + React + TS"]
+        direction TB
+        FE["sales-frontend :3000<br/><b>INTERNAL SALES PORTAL</b><br/>React CRA"]
+        BE["backend :8000<br/><b>COST CALCULATOR</b><br/>FastAPI · TransactionCostCalc"]
+        MFE["merchant-frontend :3001<br/><b>MERCHANT SELF-SERVICE</b><br/>Vite + React + TS"]
     end
 
     BE -->|httpx| MLS
 
+    subgraph MLBlock["  "]
+        MLS["ml-service :8001<br/><b>PREDICTION ENGINE</b><br/>KNN Rate Quote · Cost Forecast<br/>TPV Forecast · Profit Forecast<br/>Rate Optimisation · Monte Carlo"]
+    end
+
+    MLS -->|SQLAlchemy| DB
+
+    subgraph DataBlock["  "]
+        direction TB
+        DB[("Database<br/>(SQLAlchemy)")]
+        CS["COST STRUCTURE JSONs<br/>Visa & Mastercard<br/>fee rules and rates"]
+        DB1[("knn_transactions")]
+        DB2[("knn_cost_type_ref")]
+    end
+
     BE -->|Uses rules| CS
     BE -->|Reads| DB
-    MLS -->|Reads/Writes data<br/>SQLAlchemy| DB
-
-    subgraph Data["  "]
-        direction LR
-        CS["COST STRUCTURE JSONs<br/>Visa & Mastercard<br/>fee rules and rates"]
-        DB[("Database<br/>(SQLAlchemy)")]
-    end
-
-    subgraph Tables["  "]
-        direction LR
-        DB1[("transaction records<br/>(knn_transactions)")]
-        DB2[("cost classifications<br/>(knn_cost_type_ref)")]
-    end
-
     DB --- DB1
     DB --- DB2
 
     style USER fill:#ffffff,stroke:#1B3A5C,stroke-width:4px,color:#1a1a2e
     style NG fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
     style Services fill:#ffffff,stroke:#ffffff,stroke-width:0px
-    style Data fill:#ffffff,stroke:#ffffff,stroke-width:0px
-    style Tables fill:#ffffff,stroke:#ffffff,stroke-width:0px
+    style MLBlock fill:#ffffff,stroke:#ffffff,stroke-width:0px
+    style DataBlock fill:#ffffff,stroke:#ffffff,stroke-width:0px
 
     style FE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
     style BE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
