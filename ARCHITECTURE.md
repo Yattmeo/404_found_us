@@ -24,20 +24,24 @@ graph LR
 
     BE -->|httpx| MLS
 
-    subgraph MLBlock["  "]
+    subgraph RightSide["  "]
+        direction TB
         MLS["ml-service :8001<br/><b>PREDICTION ENGINE</b><br/>KNN Rate Quote · Cost Forecast<br/>TPV Forecast · Profit Forecast<br/>Rate Optimisation · Monte Carlo"]
+
+        subgraph DataLayer["  "]
+            direction LR
+            CS["COST STRUCTURE JSONs<br/>Visa & Mastercard<br/>fee rules and rates"]
+            DB[("Database<br/>(SQLAlchemy)")]
+        end
+
+        subgraph Tables["  "]
+            direction LR
+            DB1[("knn_transactions")]
+            DB2[("knn_cost_type_ref")]
+        end
     end
 
     MLS -->|SQLAlchemy| DB
-
-    subgraph DataBlock["  "]
-        direction TB
-        DB[("Database<br/>(SQLAlchemy)")]
-        CS["COST STRUCTURE JSONs<br/>Visa & Mastercard<br/>fee rules and rates"]
-        DB1[("knn_transactions")]
-        DB2[("knn_cost_type_ref")]
-    end
-
     BE -->|Uses rules| CS
     BE -->|Reads| DB
     DB --- DB1
@@ -46,8 +50,9 @@ graph LR
     style USER fill:#ffffff,stroke:#1B3A5C,stroke-width:4px,color:#1a1a2e
     style NG fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
     style Services fill:#ffffff,stroke:#ffffff,stroke-width:0px
-    style MLBlock fill:#ffffff,stroke:#ffffff,stroke-width:0px
-    style DataBlock fill:#ffffff,stroke:#ffffff,stroke-width:0px
+    style RightSide fill:#ffffff,stroke:#ffffff,stroke-width:0px
+    style DataLayer fill:#ffffff,stroke:#ffffff,stroke-width:0px
+    style Tables fill:#ffffff,stroke:#ffffff,stroke-width:0px
 
     style FE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
     style BE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
