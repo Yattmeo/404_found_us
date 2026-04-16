@@ -610,3 +610,184 @@ graph LR
     style RX fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style RC fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
 ```
+
+---
+
+## End-to-End Tool Flows
+
+Each diagram traces a single user journey from browser through every service layer, combining route topology with the data at each step.
+
+### 1 — Merchant Calculator · `localhost/merchant/`
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 18, 'rankSpacing': 32, 'padding': 10 }}}%%
+flowchart LR
+    U(["Browser\nlocalhost/merchant/"])
+
+    NG["GATEWAY\nNginx :80\n─────────────\n/merchant → :3001\n/api     → :8000"]
+
+    subgraph MFE["merchant-frontend :3001  ·  Vite + React + TS"]
+        direction TB
+        QF["QuotationForm.tsx\n─────────────────────\nMerchant Name · MCC\nAnnual Volume · Avg Ticket\nCurrent Rate · Fixed Fee"]
+        QR["QuotationResult.tsx\n─────────────────────\nRecommended rate\nMonthly charge estimate\nVolume forecast trend\nProfit probability curve"]
+    end
+
+    subgraph BE["backend :8000  ·  FastAPI"]
+        EP["POST /api/v1/merchant-quote\nMerchantQuoteService"]
+    end
+
+    subgraph ML["ml-service :8001  ·  sequential pipeline"]
+        direction TB
+        K["① getCompositeMerchant\nKNN → 5 nearest peer merchants\n→ composite merchant profile"]
+        T["② GetTPVForecast\nConformal prediction\n→ monthly TPV estimate"]
+        C["③ GetCostForecast\nM9 v2 trained artifacts\n→ 3-month cost % bands"]
+        P["④ GetProfitForecast\nMonte Carlo · 10 000 sims\n→ P50 / P90 profit range"]
+        K --> T --> C --> P
+    end
+
+    U          -->|"http"| NG
+    NG         -->|"/merchant  serve UI"| QF
+    QF         -->|"POST payload"| NG
+    NG         -->|"/api  proxy"| EP
+    EP         -->|"merchant profile + params"| K
+    P          -->|"ml_insights"| EP
+    EP         -->|"QuoteResult JSON"| QR
+    QR         -->|"rendered page"| U
+
+    style U    fill:#ffffff,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
+    style NG   fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
+    style MFE  fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style QF   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style QR   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style BE   fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style EP   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style ML   fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style K    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style T    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style C    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style P    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+
+    linkStyle default stroke:#4A90D9,stroke-width:2px
+```
+
+### 2 — Rates Quotation Tool · `localhost/sales/`
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 18, 'rankSpacing': 32, 'padding': 10 }}}%%
+flowchart LR
+    U(["Browser\nlocalhost/sales/"])
+
+    NG["GATEWAY\nNginx :80\n─────────────\n/sales → :3000\n/api   → :8000"]
+
+    subgraph FE["frontend :3000  ·  React CRA"]
+        direction TB
+        DM["DesiredMarginCalculator.jsx\n──────────────────────────\nMCC · Transactions CSV\nDesired Margin (bps)\nCurrent Rate · Fixed Fee"]
+        DR["DesiredMarginResults.jsx\n──────────────────────────\nRecommended rate to charge\nProfitability curve\nCost forecast chart\nVolume trend chart"]
+    end
+
+    subgraph BE["backend :8000  ·  FastAPI"]
+        direction TB
+        EP["POST /api/v1/calculations/desired-margin-details"]
+        COST["Parse CSV rows\nLookup Visa & MC JSON fee schedules\n→ interchange + network cost per txn"]
+        EP --> COST
+    end
+
+    CS[("Fee Schedules\nvisa_Card.JSON\nvisa_Network.JSON\nmasterCard_Card.JSON\nmasterCard_Network.JSON")]
+
+    subgraph ML["ml-service :8001  ·  sequential pipeline"]
+        direction TB
+        K["① getCompositeMerchant\nKNN → 5 nearest peer merchants\n→ composite merchant profile"]
+        T["② GetTPVForecast\nConformal prediction\n→ monthly TPV estimate"]
+        C["③ GetCostForecast\nM9 v2 trained artifacts\n→ 3-month cost % bands"]
+        P["④ GetProfitForecast\nMonte Carlo · 10 000 sims\nuses rate + fixed_fee + TPV + cost\n→ P50 / P90 profit range"]
+        K --> T --> C --> P
+    end
+
+    U    -->|"http"| NG
+    NG   -->|"/sales  serve UI"| DM
+    DM   -->|"POST payload + CSV"| NG
+    NG   -->|"/api  proxy"| EP
+    COST -->|"reads"| CS
+    COST -->|"enriched txn costs + params"| K
+    P    -->|"ml_insights"| COST
+    COST -->|"assembled result"| DR
+    DR   -->|"rendered page"| U
+
+    style U    fill:#ffffff,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
+    style NG   fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
+    style FE   fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style DM   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style DR   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style BE   fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style EP   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style COST fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style CS   fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style ML   fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style K    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style T    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style C    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style P    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+
+    linkStyle default stroke:#4A90D9,stroke-width:2px
+```
+
+### 3 — Profitability Calculator · `localhost/sales/`
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 18, 'rankSpacing': 32, 'padding': 10 }}}%%
+flowchart LR
+    U(["Browser\nlocalhost/sales/"])
+
+    NG["GATEWAY\nNginx :80\n─────────────\n/sales → :3000\n/api   → :8000"]
+
+    subgraph FE["frontend :3000  ·  React CRA"]
+        direction TB
+        EMF["EnhancedMerchantFeeCalculator.jsx\n──────────────────────────────────\nMCC · Transactions CSV\nCurrent Rate · Fixed Fee\n(target margin hardcoded 1.5 %)"]
+        RP["ResultsPanel.jsx\n──────────────────────────────────\nProcessing volume & fee revenue\nEffective rate vs recommended\nCost forecast chart\nVolume trend · Profit probability"]
+    end
+
+    subgraph BE["backend :8000  ·  FastAPI"]
+        direction TB
+        EP["POST /api/v1/calculations/desired-margin-details\n(desired_margin = 0.015 fixed)"]
+        COST["Parse CSV rows\nLookup Visa & MC JSON fee schedules\n→ interchange + network cost per txn\n→ effective rate · slope · cost variance"]
+        EP --> COST
+    end
+
+    CS[("Fee Schedules\nvisa_Card.JSON\nvisa_Network.JSON\nmasterCard_Card.JSON\nmasterCard_Network.JSON")]
+
+    subgraph ML["ml-service :8001  ·  sequential pipeline"]
+        direction TB
+        K["① getCompositeMerchant\nKNN → 5 nearest peer merchants\n→ composite merchant profile"]
+        T["② GetTPVForecast\nConformal prediction\n→ monthly TPV estimate"]
+        C["③ GetCostForecast\nM9 v2 trained artifacts\n→ 3-month cost % bands"]
+        P["④ GetProfitForecast\nMonte Carlo · 10 000 sims\nuses rate + fixed_fee + TPV + cost\n→ P50 / P90 profit range"]
+        K --> T --> C --> P
+    end
+
+    U    -->|"http"| NG
+    NG   -->|"/sales  serve UI"| EMF
+    EMF  -->|"POST payload + CSV"| NG
+    NG   -->|"/api  proxy"| EP
+    COST -->|"reads"| CS
+    COST -->|"enriched txn costs + params"| K
+    P    -->|"ml_insights"| COST
+    COST -->|"assembled result"| RP
+    RP   -->|"rendered page"| U
+
+    style U    fill:#ffffff,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
+    style NG   fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
+    style FE   fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style EMF  fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style RP   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style BE   fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style EP   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style COST fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style CS   fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style ML   fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style K    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style T    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style C    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style P    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+
+    linkStyle default stroke:#4A90D9,stroke-width:2px
+```
