@@ -7,7 +7,7 @@
 graph LR
     USER(("Browser<br/>(User)"))
 
-    USER -->|http| NG["PLATFORM GATEWAY<br/>Nginx :80 · nginx:alpine"]
+    USER -->|http| NG["GATEWAY<br/>Nginx :80 · nginx:alpine"]
 
     NG -->|/sales| FE
     NG -->|/api| BE
@@ -15,12 +15,12 @@ graph LR
 
     subgraph Services["  "]
         direction TB
-        FE["INTERNAL SALES PORTAL<br/>sales-frontend :3000<br/>React CRA"]
-        BE["COST CALCULATOR<br/>backend :8000<br/>FastAPI"]
-        MFE["MERCHANT SELF-SERVICE<br/>merchant-frontend :3001<br/>Vite + React + TS"]
+        FE["SALES PORTAL<br/>sales-frontend :3000<br/>React CRA"]
+        BE["COST CALC<br/>backend :8000<br/>FastAPI"]
+        MFE["MERCHANT PORTAL<br/>merchant-frontend :3001<br/>Vite + React + TS"]
     end
 
-    BE -->|httpx| MLS["PREDICTION ENGINE<br/>ml-service :8001<br/>KNN · Cost · TPV Forecast<br/>Profit · Monte Carlo"]
+    BE -->|httpx| MLS["ML ENGINE<br/>ml-service :8001<br/>KNN · Cost · TPV Forecast<br/>Profit · Monte Carlo"]
 
     MLS -->|SQLAlchemy| DB
     BE -->|Uses rules| CS
@@ -28,7 +28,7 @@ graph LR
 
     subgraph DataLayer["  "]
         direction TB
-        CS["COST STRUCTURE JSONs<br/>Visa & Mastercard fees"]
+        CS["FEE SCHEDULES<br/>Visa & Mastercard JSONs"]
         DB[("Database<br/>(SQLAlchemy)")]
         DB1[("knn_transactions")]
         DB2[("knn_cost_type_ref")]
