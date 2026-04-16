@@ -628,44 +628,50 @@ flowchart LR
 
     subgraph MFE["merchant-frontend :3001  ·  Vite + React + TS"]
         direction TB
-        QF["QuotationForm.tsx\n─────────────────────\nMerchant Name · MCC\nAnnual Volume · Avg Ticket\nCurrent Rate · Fixed Fee"]
-        QR["QuotationResult.tsx\n─────────────────────\nRecommended rate\nMonthly charge estimate\nVolume forecast trend\nProfit probability curve"]
+        QF["QuotationForm.tsx\n─────────────────────\nMerchant Name · MCC\nMonthly Txns · Avg Ticket\nPayment Brands"]
+        QR["QuotationResult.tsx\n─────────────────────\nin_person_rate_range\nonline_rate_range\nCharges & monthly fees\nml_insights: cost band\nml_insights: volume band"]
     end
 
-    subgraph BE["backend :8000  ·  FastAPI"]
-        EP["POST /api/v1/merchant-quote\nMerchantQuoteService"]
-    end
-
-    subgraph ML["ml-service :8001  ·  sequential pipeline"]
+    subgraph BE["backend :8000  ·  FastAPI\nPOST /api/v1/merchant-quote\nMerchantQuoteService"]
         direction TB
-        K["① getCompositeMerchant\nKNN → 5 nearest peer merchants\n→ composite merchant profile"]
-        T["② GetTPVForecast\nConformal prediction\n→ monthly TPV estimate"]
-        C["③ GetCostForecast\nM9 v2 trained artifacts\n→ 3-month cost % bands"]
-        P["④ GetProfitForecast\nMonte Carlo · 10 000 sims\n→ P50 / P90 profit range"]
-        K --> T --> C --> P
+        KNN_RATE["① knn-rate-quote\nKNN peers → historical cost dist.\n+ 30 bps margin\n→ in_person_rate_range\nonline = in-person + 0.1pp"]
+        INSIGHTS["② forecast pipeline\n(informational only)"]
+        KNN_RATE --> INSIGHTS
     end
 
-    U          -->|"http"| NG
-    NG         -->|"/merchant  serve UI"| QF
-    QF         -->|"POST payload"| NG
-    NG         -->|"/api  proxy"| EP
-    EP         -->|"merchant profile + params"| K
-    P          -->|"ml_insights"| EP
-    EP         -->|"QuoteResult JSON"| QR
-    QR         -->|"rendered page"| U
+    subgraph ML["ml-service :8001"]
+        direction TB
+        KR["POST /ml/knn-rate-quote\nmcc · card_type · monthly_txn_count\navg_amount · as_of_date\n→ forecast_proc_cost list"]
+        GCM["POST /ml/getCompositeMerchant\n→ weekly_features · k · end_month"]
+        TPV["POST /ml/GetTPVForecast\n→ tpv_mid / ci_lower / ci_upper"]
+        CF["POST /ml/GetCostForecast\nM9 v2\n→ proc_cost_pct bands"]
+        GCM --> TPV --> CF
+    end
 
-    style U    fill:#ffffff,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
-    style NG   fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
-    style MFE  fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style QF   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
-    style QR   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
-    style BE   fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
-    style EP   fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
-    style ML   fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
-    style K    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style T    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style C    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
-    style P    fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    U        -->|"http"| NG
+    NG       -->|"/merchant  serve UI"| QF
+    QF       -->|"POST payload"| NG
+    NG       -->|"/api  proxy"| KNN_RATE
+    KNN_RATE -->|"mcc · card_type · avg_ticket"| KR
+    KR       -->|"rate range"| KNN_RATE
+    INSIGHTS -->|"onboarding rows · mcc"| GCM
+    CF       -->|"cost_forecast_week_1\nvolume_forecast_week_1"| INSIGHTS
+    INSIGHTS -->|"ml_insights"| QR
+    QR       -->|"rendered page"| U
+
+    style U        fill:#ffffff,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
+    style NG       fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
+    style MFE      fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style QF       fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style QR       fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style BE       fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style KNN_RATE fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style INSIGHTS fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style ML       fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style KR       fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style GCM      fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style TPV      fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style CF       fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
 
     linkStyle default stroke:#4A90D9,stroke-width:2px
 ```
