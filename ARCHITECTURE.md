@@ -3,13 +3,13 @@
 ## System Overview
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '18px' }, 'flowchart': { 'nodeSpacing': 25, 'rankSpacing': 35, 'padding': 12 }}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '16px' }, 'flowchart': { 'nodeSpacing': 40, 'rankSpacing': 50, 'padding': 16 }}}%%
 graph TB
-    USER(("Browser"))
+    USER(("Browser<br/>(User)"))
 
-    USER -->|HTTP| NG
+    USER -->|http| NG
 
-    NG["Nginx :80<br/>nginx:alpine"]
+    NG["CENTRAL PLATFORM GATEWAY<br/>Nginx :80<br/>Reverse Proxy · nginx:alpine"]
 
     NG -->|"/sales/*"| FE
     NG -->|"/api/*"| BE
@@ -18,29 +18,38 @@ graph TB
 
     subgraph Services["  "]
         direction LR
-        FE["sales-frontend :3000<br/>React CRA"]
-        BE["backend :8000<br/>FastAPI · TransactionCostCalc"]
-        MLS["ml-service :8001<br/>KNN Rate Quote · Cost Forecast<br/>TPV Forecast · Volume Forecast<br/>Profit Forecast · Rate Optimisation<br/>TPV Prediction · Monte Carlo"]
-        MFE["merchant-frontend :3001<br/>Vite + React + TS"]
+        FE["sales-frontend :3000<br/><b>INTERNAL SALES PORTAL</b><br/>built with React CRA"]
+        BE["backend :8000<br/><b>COST CALCULATOR</b><br/>calculates processing costs<br/>powered by FastAPI<br/>(TransactionCostCalc)"]
+        MLS["ml-service :8001<br/><b>PREDICTION ENGINE</b><br/>FastAPI · KNN Rate Quote<br/>Cost Forecast · TPV Forecast<br/>Profit Forecast · Rate Optimisation<br/>TPV Prediction · Monte Carlo"]
+        MFE["merchant-frontend :3001<br/><b>MERCHANT SELF-SERVICE</b><br/>built with Vite + React + TS"]
     end
 
     BE -->|httpx| MLS
 
+    BE -->|Uses rules| CS
+    BE -->|Reads| DB
+    MLS -->|Reads/Writes data<br/>SQLAlchemy| DB
+
     subgraph Data["  "]
         direction LR
-        CS["Cost Structure JSON<br/>Visa & Mastercard Fee Schedules"]
-        DB1[("knn_transactions")]
-        DB2[("knn_cost_type_ref")]
+        CS["COST STRUCTURE JSONs<br/>Visa & Mastercard<br/>fee rules and rates"]
+        DB[("Database<br/>(SQLAlchemy)")]
     end
 
-    BE -->|Reads| CS
-    MLS -->|SQLAlchemy| DB1
-    MLS -->|SQLAlchemy| DB2
+    subgraph Tables["  "]
+        direction LR
+        DB1[("transaction records<br/>(knn_transactions)")]
+        DB2[("cost classifications<br/>(knn_cost_type_ref)")]
+    end
+
+    DB --- DB1
+    DB --- DB2
 
     style USER fill:#ffffff,stroke:#1B3A5C,stroke-width:4px,color:#1a1a2e
     style NG fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
     style Services fill:#ffffff,stroke:#ffffff,stroke-width:0px
     style Data fill:#ffffff,stroke:#ffffff,stroke-width:0px
+    style Tables fill:#ffffff,stroke:#ffffff,stroke-width:0px
 
     style FE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
     style BE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
@@ -48,6 +57,7 @@ graph TB
     style MFE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
 
     style CS fill:#E8F4FD,stroke:#4A90D9,stroke-width:3px,color:#1a1a2e
+    style DB fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
     style DB1 fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
     style DB2 fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
 
@@ -88,7 +98,7 @@ graph LR
             TC["POST /calculations/transaction-costs<br/>Primary: CSV upload → enriched CSV + metrics"]
             MF["POST /calculations/merchant-fee<br/>Calculate current interchange rates"]
             DM["POST /calculations/desired-margin<br/>Rate needed for target margin"]
-            DMD["POST /calculations/desired-margin-details<br/>Aggregator: calls 3 ML endpoints"]
+            DMD["POST /calculations/desired-margin-details<br/>Aggregator: calls 4 ML endpoints"]
         end
 
         subgraph txn["Transactions"]
@@ -252,11 +262,14 @@ sequenceDiagram
     BE->>ML: POST /ml/getCompositeMerchant
     ML-->>BE: composite merchant profile
 
+    BE->>ML: POST /ml/GetTPVForecast
+    ML-->>BE: conformal monthly TPV prediction
+
     BE->>ML: POST /ml/GetCostForecast
     ML-->>BE: 3-month cost forecast (M9 v2)
 
-    BE->>ML: POST /ml/GetVolumeForecast
-    ML-->>BE: 12-week volume forecast (SARIMAX)
+    BE->>ML: POST /ml/GetProfitForecast
+    ML-->>BE: Monte Carlo profit simulation
 
     BE-->>MFE: QuoteResult (rates, charges, ml_insights)
     MFE-->>User: Display quotation
@@ -321,7 +334,7 @@ flowchart TB
     end
 
     ASSEMBLE["Backend assembles:<br/>Cost & volume forecasts · Profitability curve<br/>Estimated profit range · Key metrics"]
-    RES["ResultsPanel.jsx<br/>Charts: Cost Forecast · Volume Trend · Probability Curve<br/>+ Processing Volume · Fee Revenue · Annual Profit"]
+    RES["ResultsPanel.jsx<br/>Charts: Cost Forecast · Volume Trend · Probability Curve<br/>+ Processing Volume · Fee Revenue"]
 
     U --> FE --> EP --> COST --> ML --> ASSEMBLE --> RES
 

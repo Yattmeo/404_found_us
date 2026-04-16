@@ -85,7 +85,7 @@ User: MCC + Transactions CSV + [Current Rate] + [Fixed Fee]
         │
         ▼
   ResultsPanel.jsx — Charts: Cost Forecast, Volume Trend, Probability Curve
-                   + Processing Volume, Fee Revenue, Annual Profit
+                   + Processing Volume, Fee Revenue
 ```
 
 ---
@@ -170,7 +170,7 @@ KNN transaction data (~3.88M rows) is already seeded in PostgreSQL. No additiona
 | POST | `/calculations/transaction-costs` | Interchange & network cost enrichment (streams CSV) |
 | POST | `/calculations/merchant-fee` | Calculate merchant fees from transactions |
 | POST | `/calculations/desired-margin` | Calculate desired margin rate |
-| POST | `/calculations/desired-margin-details` | **Full pipeline** — fee calc + ML forecasts + profitability |
+| POST | `/calculations/desired-margin-details` | **Full pipeline** — fee calc + 4 ML forecasts + profitability |
 | POST | `/transactions/upload` | Upload transaction CSV/Excel |
 | GET | `/transactions` | List transactions (paginated) |
 | GET | `/transactions/{id}` | Get transaction by ID |
@@ -228,12 +228,12 @@ python -m http.server 8000
 
 Then open: `http://localhost:8000/presentation/index.html`
 
-Current `/sales` probability chart behavior (no current rate path):
+Current `/sales` probability chart behavior:
 
 - Chart title: `Probability of Profitability`
 - Y-axis fixed to `0%` to `100%`
 - Curve approaches an asymptote at `97.5%` (does not touch `100%`)
-- Suggested rate is shown as a vertical marker line
+- Current rate (if provided) and suggested rate shown as vertical marker lines
 - X-axis label is `Rate (%)` with de-cluttered "nice" tick labels
 
 ---
