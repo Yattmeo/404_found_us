@@ -5,54 +5,42 @@
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F5FAFF', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 25, 'rankSpacing': 45, 'padding': 12 }}}%%
 graph LR
-    USER(("Browser\n(User)"))
+    USER(("Browser<br/>(User)"))
 
-    USER -->|http| NG
+    USER -->|http| NG["PLATFORM GATEWAY<br/>Nginx :80 · nginx:alpine"]
 
-    NG["CENTRAL PLATFORM GATEWAY\nNginx :80 · nginx:alpine"]
-
-    NG -->|"/sales/*"| FE
-    NG -->|"/api/*"| BE
-    NG -->|"/merchant/*"| MFE
+    NG -->|/sales| FE
+    NG -->|/api| BE
+    NG -->|/merchant| MFE
 
     subgraph Services["  "]
         direction TB
-        FE["sales-frontend :3000\nINTERNAL SALES PORTAL\nReact CRA"]
-        BE["backend :8000\nCOST CALCULATOR\nFastAPI"]
-        MFE["merchant-frontend :3001\nMERCHANT SELF-SERVICE\nVite + React + TS"]
+        FE["INTERNAL SALES PORTAL<br/>sales-frontend :3000<br/>React CRA"]
+        BE["COST CALCULATOR<br/>backend :8000<br/>FastAPI"]
+        MFE["MERCHANT SELF-SERVICE<br/>merchant-frontend :3001<br/>Vite + React + TS"]
     end
 
-    BE -->|httpx| MLS
-
-    subgraph RightSide["  "]
-        direction TB
-        MLS["ml-service :8001\nPREDICTION ENGINE\nKNN · Cost · TPV Forecast\nProfit · Rate Opt · Monte Carlo"]
-
-        subgraph DataLayer["  "]
-            direction LR
-            CS["COST STRUCTURE JSONs\nVisa & Mastercard fees"]
-            DB[("Database\n(SQLAlchemy)")]
-        end
-
-        subgraph Tables["  "]
-            direction LR
-            DB1[("knn_transactions")]
-            DB2[("knn_cost_type_ref")]
-        end
-    end
+    BE -->|httpx| MLS["PREDICTION ENGINE<br/>ml-service :8001<br/>KNN · Cost · TPV Forecast<br/>Profit · Monte Carlo"]
 
     MLS -->|SQLAlchemy| DB
     BE -->|Uses rules| CS
     BE -->|Reads| DB
+
+    subgraph DataLayer["  "]
+        direction TB
+        CS["COST STRUCTURE JSONs<br/>Visa & Mastercard fees"]
+        DB[("Database<br/>(SQLAlchemy)")]
+        DB1[("knn_transactions")]
+        DB2[("knn_cost_type_ref")]
+    end
+
     DB --- DB1
     DB --- DB2
 
     style USER fill:#ffffff,stroke:#1B3A5C,stroke-width:4px,color:#1a1a2e
     style NG fill:#1B3A5C,stroke:#1B3A5C,stroke-width:3px,color:#ffffff
     style Services fill:#ffffff,stroke:#ffffff,stroke-width:0px
-    style RightSide fill:#ffffff,stroke:#ffffff,stroke-width:0px
     style DataLayer fill:#ffffff,stroke:#ffffff,stroke-width:0px
-    style Tables fill:#ffffff,stroke:#ffffff,stroke-width:0px
 
     style FE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
     style BE fill:#D6EAF8,stroke:#1B3A5C,stroke-width:3px,color:#1a1a2e
