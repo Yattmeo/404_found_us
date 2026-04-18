@@ -55,6 +55,71 @@ graph LR
     linkStyle default stroke:#4A90D9,stroke-width:3px
 ```
 
+## Solution Overview
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 30, 'rankSpacing': 50, 'padding': 12 }}}%%
+flowchart TB
+    subgraph Users["User Personas"]
+        S(["Sales Team"])
+        M(["Prospective Merchant"])
+    end
+
+    subgraph Gateway["Nginx Gateway :80"]
+        NG["Reverse Proxy<br/>Path-based routing"]
+    end
+
+    subgraph FrontendLayer["Frontend Layer"]
+        FE["Sales Portal<br/>React CRA · :3000<br/>─────────────────<br/>Profitability Calculator<br/>Rates Quotation Tool<br/>Transaction Cost Calculator"]
+        MFE["Merchant Portal<br/>Vite + React + TS · :3001<br/>─────────────────<br/>Online Quotation Form<br/>Rate Comparison"]
+    end
+
+    subgraph BackendLayer["Backend Layer"]
+        BE["Backend API<br/>FastAPI · :8000<br/>─────────────────<br/>Cost Calculation Engine<br/>CSV/Excel Processing<br/>Merchant & Transaction CRUD<br/>ML Pipeline Orchestration"]
+    end
+
+    subgraph MLLayer["ML Engine Layer"]
+        MLS["ML Service<br/>FastAPI · :8001<br/>─────────────────<br/>KNN Rate Quoting<br/>TPV Forecasting (Conformal)<br/>Cost Forecasting (M9 v2)<br/>Profit Simulation (Monte Carlo)<br/>Volume Forecasting (SARIMAX)"]
+    end
+
+    subgraph DataLayer["Data Layer"]
+        DB[("PostgreSQL 16<br/>─────────────<br/>transactions<br/>merchants<br/>calculation_results<br/>upload_batches<br/>knn_transactions")]
+        CS["Fee Schedule JSONs<br/>Visa Card · Visa Network<br/>MC Card · MC Network"]
+        ART["Model Artifacts<br/>M9 v2 (cost)<br/>TPV (volume)"]
+    end
+
+    S --> NG
+    M --> NG
+    NG -->|"/sales/*"| FE
+    NG -->|"/merchant/*"| MFE
+    NG -->|"/api/*"| BE
+    FE -->|"API calls"| BE
+    MFE -->|"API calls"| BE
+    BE -->|"httpx"| MLS
+    BE -->|"reads"| CS
+    BE -->|"SQLAlchemy"| DB
+    MLS -->|"SQLAlchemy"| DB
+    MLS -->|"loads"| ART
+
+    style Users fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style S fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style M fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style Gateway fill:#1B3A5C,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style NG fill:#1B3A5C,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style FrontendLayer fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style FE fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style MFE fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style BackendLayer fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style BE fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style MLLayer fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style MLS fill:#ffffff,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
+    style DataLayer fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style DB fill:#1B3A5C,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style CS fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style ART fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    linkStyle default stroke:#4A90D9,stroke-width:2px
+```
+
 ## Detailed Service Architecture
 
 ```mermaid
