@@ -58,9 +58,10 @@ graph LR
 ## Solution Overview
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px' }, 'flowchart': { 'nodeSpacing': 30, 'rankSpacing': 50, 'padding': 12 }}}%%
-flowchart TB
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#D6EAF8', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4A90D9', 'lineColor': '#4A90D9', 'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '12px' }, 'flowchart': { 'nodeSpacing': 20, 'rankSpacing': 55, 'padding': 10 }}}%%
+flowchart LR
     subgraph Users["User Personas"]
+        direction TB
         S(["Sales Team"])
         M(["Prospective Merchant"])
     end
@@ -70,6 +71,7 @@ flowchart TB
     end
 
     subgraph FrontendLayer["Frontend Layer"]
+        direction TB
         FE["Sales Portal<br/>React CRA · :3000<br/>─────────────────<br/>Profitability Calculator<br/>Rates Quotation Tool<br/>Transaction Cost Calculator"]
         MFE["Merchant Portal<br/>Vite + React + TS · :3001<br/>─────────────────<br/>Online Quotation Form<br/>Rate Comparison"]
     end
@@ -83,7 +85,8 @@ flowchart TB
     end
 
     subgraph DataLayer["Data Layer"]
-        DB[("PostgreSQL 16<br/>─────────────<br/>transactions<br/>merchants<br/>calculation_results<br/>upload_batches<br/>knn_transactions")]
+        direction TB
+        DB[("PostgreSQL 16<br/>─────────────<br/>transactions · merchants<br/>calculation_results<br/>upload_batches · knn_txns")]
         CS["Fee Schedule JSONs<br/>Visa Card · Visa Network<br/>MC Card · MC Network"]
         ART["Model Artifacts<br/>M9 v2 (cost)<br/>TPV (volume)"]
     end
