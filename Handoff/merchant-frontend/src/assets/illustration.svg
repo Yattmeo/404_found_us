@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="560" viewBox="0 0 800 560" role="img" aria-labelledby="title desc">
+  <title id="title">Quotation illustration</title>
+  <desc id="desc">Abstract illustration placeholder for merchant quotation tool</desc>
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+  <rect x="40" y="40" width="720" height="480" rx="36" fill="url(#g1)"/>
+  <circle cx="220" cy="220" r="88" fill="#ffffff" fill-opacity="0.24"/>
+  <rect x="338" y="156" width="230" height="26" rx="13" fill="#ffffff" fill-opacity="0.35"/>
+  <rect x="338" y="198" width="188" height="20" rx="10" fill="#ffffff" fill-opacity="0.22"/>
+  <rect x="338" y="246" width="260" height="20" rx="10" fill="#ffffff" fill-opacity="0.22"/>
+  <rect x="338" y="294" width="160" height="20" rx="10" fill="#ffffff" fill-opacity="0.22"/>
+  <rect x="170" y="340" width="460" height="110" rx="18" fill="#ffffff" fill-opacity="0.18"/>
+</svg>

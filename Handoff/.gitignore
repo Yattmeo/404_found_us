@@ -1,0 +1,81 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+!frontend/src/lib/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.joblib
+*.weights
+wandb/
+
+# Virtual environments
+.env
+.venv
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# ML models and data
+*.pkl
+!ml_service/artifacts/**/*.pkl
+*.h5
+*.model
+catboost_info/
+*.csv
+!cost_structure/cost_type_id.csv
+*.xlsx
+data/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# React
+/build
+/frontend/build
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Presentation assets (local only)
+presentation/
+
+# test data 
+/data

@@ -1,0 +1,116 @@
+﻿# Load all secrets from .env (copy .env.example → .env and fill in values)
+# Never commit .env to version control.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ml-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ml-backend
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - COST_STRUCTURE_DIR=${COST_STRUCTURE_DIR}
+      - ML_SERVICE_URL=${ML_SERVICE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - BACKEND_PORT=${BACKEND_PORT}
+    volumes:
+      - ./cost_structure:/app/cost_structure:ro
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ml-frontend
+    environment:
+      - FRONTEND_PORT=${FRONTEND_PORT}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+  merchant-frontend:
+    build:
+      context: ./merchant-frontend
+      dockerfile: Dockerfile
+    container_name: ml-merchant-frontend
+    environment:
+      - MERCHANT_PORT=${MERCHANT_PORT}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: ml-nginx
+    ports:
+      - "${NGINX_PORT}:${NGINX_PORT}"
+    environment:
+      - NGINX_PORT=${NGINX_PORT}
+      - BACKEND_PORT=${BACKEND_PORT}
+      - ML_PORT=${ML_PORT}
+      - FRONTEND_PORT=${FRONTEND_PORT}
+      - MERCHANT_PORT=${MERCHANT_PORT}
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template
+    depends_on:
+      - backend
+      - frontend
+      - merchant-frontend
+      - ml-service
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+  ml-service:
+    build:
+      context: ./ml_service
+      dockerfile: Dockerfile
+    container_name: ml-service
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - PROC_COST_ARTIFACTS_BASE_PATH=${PROC_COST_ARTIFACTS_BASE_PATH}
+      - TPV_ARTIFACTS_BASE_PATH=${TPV_ARTIFACTS_BASE_PATH}
+      - KNN_SEED_CSV_PATH=${KNN_SEED_CSV_PATH}
+      - ML_PORT=${ML_PORT}
+    volumes:
+      # KNN seed data: place processed_transactions_4mcc.csv in ml_service/data/
+      # The service will start in degraded mode (no KNN) if the file is absent.
+      - ./ml_service/data/knn_seed.csv:/data/knn_seed.csv:ro
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - ml-network
+
+networks:
+  ml-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

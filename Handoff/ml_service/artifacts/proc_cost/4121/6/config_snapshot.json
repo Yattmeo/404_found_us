@@ -1,0 +1,19 @@
+{
+  "trained_at": "2026-04-10T06:45:59.854004+00:00",
+  "mcc": 4121,
+  "context_len": 6,
+  "horizon_len": 3,
+  "window_start": "2016-01",
+  "window_end": "2019-12",
+  "n_train_ci": 835,
+  "n_cal_ci": 231,
+  "n_test_ci": 149,
+  "cal_year": 2018,
+  "global_q90": 0.5207551580243941,
+  "knn_k": 10,
+  "target_cov": 0.9,
+  "strat_enabled": false,
+  "strat_scheme": null,
+  "n_model_features": 7,
+  "n_risk_features": 9
+}
