@@ -767,7 +767,7 @@ def calculate_desired_margin_details(data: dict, db: Session = Depends(get_db)):
             # transition zone overlaps the rate grid (1.5% – 3.5%).
             # Use 30% of avg_cost_mid so the ±2σ region spans ~60% of
             # the cost value, keeping the curve visually informative
-            # even when the CI from M9 is very tight.
+            # even when the CI from the cost forecast is very tight.
             min_sigma = max(avg_cost_mid * 0.30, 0.0020)
             if cost_hw_values:
                 spread_sigma = max(

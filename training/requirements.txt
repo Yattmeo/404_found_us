@@ -1,0 +1,8 @@
+# Training-environment dependencies
+# Install with: pip install -r training/requirements.txt
+# Python ≥ 3.10 required
+
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+joblib>=1.3

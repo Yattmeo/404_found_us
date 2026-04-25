@@ -16,13 +16,13 @@ All endpoints are prefixed with `/ml` by the nginx proxy.
 | POST | `/knn-rate-quote` | KNN Rate Quote | KNN-based processing cost forecast |
 | POST | `/getQuote` | KNN Quote Service | Match 5 similar merchants, return cost history |
 | POST | `/getCompositeMerchant` | KNN Quote Service | Match 5 merchants, return composite weekly features |
-| POST | `/GetCostForecast` | Cost Forecast (M9 v2) | 3-month cost forecast (M9 monthly → weekly interpolation) |
+| POST | `/GetCostForecast` | Cost Forecast | 3-month cost forecast (monthly → weekly interpolation) |
 | POST | `/GetTPVForecast` | TPV Forecast | Conformal monthly TPV prediction |
 | POST | `/GetVolumeForecast` | Volume Forecast | 12-week TPV forecast (SARIMA/SARIMAX) |
 | POST | `/GetProfitForecast` | Profit Forecast | Monte Carlo profit simulation (cost + TPV + fee rate + fixed fee) |
 | POST | `/rate-optimisation` | Rate Optimisation | Rate optimisation engine (stub) |
 | POST | `/tpv-prediction` | TPV Prediction | TPV prediction engine (stub) |
-| GET | `/cost-forecast/health` | Cost Forecast (M9 v2) | M9 health check |
+| GET | `/cost-forecast/health` | Cost Forecast | Processing-cost forecast health check |
 
 Swagger docs: http://localhost/ml/docs
 
@@ -33,7 +33,7 @@ Swagger docs: http://localhost/ml/docs
 ```
 ml_service/modules/
 ├── knn_rate_quote/       ✅ Implemented — KNN, PostgreSQL-backed
-├── cost_forecast/        ✅ Implemented — M9 v2 artifact-based cost prediction
+├── cost_forecast/        ✅ Implemented — artifact-based processing-cost prediction
 ├── tpv_forecast/         ✅ Implemented — Conformal TPV prediction
 ├── volume_forecast/      ✅ Implemented — SARIMAX weekly forecast
 ├── profit_forecast/      ✅ Implemented — Monte Carlo profit simulation
@@ -47,11 +47,11 @@ ml_service/modules/
 /ml/GetCostForecast (legacy format)
     │
     ├── Convert weekly features → monthly context (6 months)
-    ├── Forward to M9 Forecast Service (:8092)
+    ├── Forward to Cost Forecast Service (:8092)
     │       └── HuberRegressor + GBR conformal intervals → 3 monthly points
     ├── Interpolate 3 months → 12 weekly points (linear, 4 wks/month)
     │
-    └── Fallback (if M9 degraded): base_cost_rate with drift factors
+    └── Fallback (if cost forecast degraded): base_cost_rate with drift factors
             └── Also interpolated to 12 weekly points
 ```
 

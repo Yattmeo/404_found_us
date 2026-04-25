@@ -1,6 +1,0 @@
-services:
-  get-cost-forecast:
-    build: .
-    ports:
-      - "8001:8000"
-    restart: unless-stopped

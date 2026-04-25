@@ -77,7 +77,7 @@ class MerchantQuoteService:
         # Keep rate in percentage form so proc_cost is in cents-scale
         # (matching training data where sum(proc_cost)/sum(amount) ≈ 1.5
         # for 1.5% cost).  Previous code divided by 100 which produced
-        # dollar-scale proc_cost, giving the M9 model 100× too-small input.
+        # dollar-scale proc_cost, giving the cost model 100× too-small input.
         safe_rate_pct = max(effective_rate_pct, 0.5)
         card_type = MerchantQuoteService._card_type_from_brands(brands)
 
@@ -220,9 +220,9 @@ class MerchantQuoteService:
                 except Exception as exc:
                     logger.warning("TPV forecast step failed (non-fatal): %s", exc)
 
-                # 2. Cost forecast — let M9 derive pool means from cost context
+                # 2. Cost forecast — let proc_cost derive pool means from cost context
                 #    (TPV pool means are log-TPV values, NOT cost percentages,
-                #     so passing them would poison the M9 cost model.)
+                #     so passing them would poison the cost model.)
                 try:
                     cost_body = {
                         "composite_weekly_features": weekly_features,
@@ -240,7 +240,7 @@ class MerchantQuoteService:
                     cost_resp.raise_for_status()
                     cost_payload = cost_resp.json()
 
-                    # The ML cost forecast (both M9 and fallback) outputs
+                    # The ML cost forecast (both proc_cost and fallback) outputs
                     # percentage-scale values (e.g. 1.5 = 1.5 %).  The rest of
                     # the pipeline (profit simulation, profitability curves)
                     # expects decimal fractions (0.015 = 1.5 %) consistent with

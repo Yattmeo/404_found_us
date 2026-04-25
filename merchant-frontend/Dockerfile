@@ -18,6 +18,6 @@ RUN npm install -g serve
 
 COPY --from=build /app/build ./build
 
-EXPOSE 3001
+EXPOSE ${MERCHANT_PORT:-3001}
 
-CMD ["serve", "-s", "build", "-l", "3001"]
+CMD serve -s build -l ${MERCHANT_PORT:-3001}

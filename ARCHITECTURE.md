@@ -81,14 +81,14 @@ flowchart LR
     end
 
     subgraph MLLayer["ML Engine Layer"]
-        MLS["ML Service<br/>FastAPI · :8001<br/>─────────────────<br/>KNN Rate Quoting<br/>TPV Forecasting (Conformal)<br/>Cost Forecasting (M9 v2)<br/>Profit Simulation (Monte Carlo)<br/>Volume Forecasting (SARIMAX)"]
+        MLS["ML Service<br/>FastAPI · :8001<br/>─────────────────<br/>KNN Rate Quoting<br/>TPV Forecasting (Conformal)<br/>Cost Forecasting (proc_cost)<br/>Profit Simulation (Monte Carlo)<br/>Volume Forecasting (SARIMAX)"]
     end
 
     subgraph DataLayer["Data Layer"]
         direction TB
         DB[("PostgreSQL 16<br/>─────────────<br/>transactions · merchants<br/>calculation_results<br/>upload_batches · knn_txns")]
         CS["Fee Schedule JSONs<br/>Visa Card · Visa Network<br/>MC Card · MC Network"]
-        ART["Model Artifacts<br/>M9 v2 (cost)<br/>TPV (volume)"]
+        ART["Model Artifacts<br/>proc_cost (cost)<br/>TPV (volume)"]
     end
 
     S --> NG
@@ -222,7 +222,7 @@ graph TB
         end
 
         subgraph forecast["Forecast Services"]
-            CF["cost_forecast/<br/>POST /ml/GetCostForecast<br/>M9 v2 monthly cost forecast"]
+            CF["cost_forecast/<br/>POST /ml/GetCostForecast<br/>Monthly processing-cost forecast"]
             VF["volume_forecast/<br/>POST /ml/GetVolumeForecast<br/>SARIMAX weekly volume"]
             PF["profit_forecast/<br/>POST /ml/GetProfitForecast<br/>Monte Carlo simulation"]
             TF["tpv_forecast/<br/>POST /ml/GetTPVForecast<br/>Conformal TPV forecast"]
@@ -243,11 +243,11 @@ graph TB
     end
 
     subgraph artifacts["Trained Model Artifacts"]
-        M9["artifacts/m9/<br/>└─ 5411/{1,3,6}/<br/>&nbsp;&nbsp;&nbsp;├─ models.pkl<br/>&nbsp;&nbsp;&nbsp;├─ scaler.pkl<br/>&nbsp;&nbsp;&nbsp;├─ cal_residuals.pkl<br/>&nbsp;&nbsp;&nbsp;├─ risk_models.pkl<br/>&nbsp;&nbsp;&nbsp;└─ config_snapshot.json"]
+        PC["artifacts/proc_cost/<br/>└─ 5411/{1,3,6}/<br/>&nbsp;&nbsp;&nbsp;├─ models.pkl<br/>&nbsp;&nbsp;&nbsp;├─ scaler.pkl<br/>&nbsp;&nbsp;&nbsp;├─ cal_residuals.pkl<br/>&nbsp;&nbsp;&nbsp;├─ risk_models.pkl<br/>&nbsp;&nbsp;&nbsp;└─ config_snapshot.json"]
         TPV["artifacts/tpv/<br/>├─ 4121/<br/>├─ 5411/<br/>├─ 5499/<br/>└─ 5812/"]
     end
 
-    CF -.->|loads| M9
+    CF -.->|loads| PC
     TF -.->|loads| TPV
 
     style ml fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
@@ -268,7 +268,7 @@ graph TB
     style GQ fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style GCM fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style HH fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
-    style M9 fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
+    style PC fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
     style TPV fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
 ```
 
@@ -343,9 +343,9 @@ flowchart TB
         direction TB
         KNN["① /ml/getCompositeMerchant<br/>KNN → 5 nearest merchants"]
         TPV["② /ml/GetTPVForecast<br/>Conformal monthly TPV prediction"]
-        M9["③ /ml/GetCostForecast<br/>M9 v2 → 3-month cost %"]
+        PC["③ /ml/GetCostForecast<br/>proc_cost → 3-month cost %"]
         MC["④ /ml/GetProfitForecast<br/>Monte Carlo simulation<br/>(uses cost + TPV + fee rate + fixed fee)"]
-        KNN --> TPV --> M9 --> MC
+        KNN --> TPV --> PC --> MC
     end
 
     ASSEMBLE["Backend assembles:<br/>Recommended rate · Profitability curve<br/>Cost & volume forecasts · Estimated profit range"]
@@ -360,7 +360,7 @@ flowchart TB
     style ML fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style KNN fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style TPV fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
-    style M9 fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style PC fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style MC fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
     style ASSEMBLE fill:#D6EAF8,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style RES fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
@@ -380,9 +380,9 @@ flowchart TB
         direction TB
         KNN["① /ml/getCompositeMerchant<br/>KNN → 5 nearest merchants"]
         TPV["② /ml/GetTPVForecast<br/>Conformal monthly TPV prediction"]
-        M9["③ /ml/GetCostForecast<br/>M9 v2 → 3-month cost %"]
+        PC["③ /ml/GetCostForecast<br/>proc_cost → 3-month cost %"]
         MC["④ /ml/GetProfitForecast<br/>Monte Carlo simulation<br/>(uses cost + TPV + fee rate + fixed fee)"]
-        KNN --> TPV --> M9 --> MC
+        KNN --> TPV --> PC --> MC
     end
 
     ASSEMBLE["Backend assembles:<br/>Cost & volume forecasts · Profitability curve<br/>Estimated profit range · Key metrics"]
@@ -397,7 +397,7 @@ flowchart TB
     style ML fill:#E8F4FD,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style KNN fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style TPV fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
-    style M9 fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
+    style PC fill:#ffffff,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style MC fill:#4A90D9,stroke:#1B3A5C,stroke-width:2px,color:#ffffff
     style ASSEMBLE fill:#D6EAF8,stroke:#4A90D9,stroke-width:2px,color:#1a1a2e
     style RES fill:#D6EAF8,stroke:#1B3A5C,stroke-width:2px,color:#1a1a2e
@@ -510,7 +510,7 @@ graph TB
 
         subgraph volumes["Mounted Volumes"]
             cs["cost_structure/<br/>4 JSON fee files (ro)"]
-            m9_art["ml_service/artifacts/m9/<br/>M9 v2 trained models"]
+            pc_art["ml_service/artifacts/proc_cost/<br/>Processing-cost trained models"]
             tpv_art["ml_service/artifacts/tpv/<br/>TPV trained models"]
         end
     end
@@ -526,7 +526,7 @@ graph TB
     mlservice -.->|depends_on| postgres
 
     backend --- cs
-    mlservice --- m9_art
+    mlservice --- pc_art
     mlservice --- tpv_art
     postgres --- vol_pg
 ```
@@ -552,7 +552,7 @@ graph TB
 │       ├── cost_calculation/   # Interchange cost computation
 │       └── merchant_quote/     # Quote generation with ML pipeline
 ├── ml_service/                 # FastAPI — ML engine orchestration
-│   ├── app.py                  # Entry point, initializes M9 + TPV caches
+│   ├── app.py                  # Entry point, initializes proc_cost + TPV caches
 │   ├── config.py               # VECTOR_DIM, SARIMA params, artifact paths
 │   ├── database.py             # SQLAlchemy engine + session
 │   ├── models.py               # ORM: knn_transactions, knn_cost_type_ref
@@ -560,10 +560,10 @@ graph TB
 │   ├── schemas.py              # Shared Pydantic models
 │   ├── Dockerfile
 │   ├── artifacts/
-│   │   ├── m9/5411/{1,3,6}/    # M9 v2 cost forecast models
+│   │   ├── proc_cost/5411/{1,3,6}/    # Processing-cost forecast models
 │   │   └── tpv/{4121,5411,5499,5812}/  # TPV forecast models
 │   └── modules/
-│       ├── cost_forecast/      # M9 v2 artifact-based cost prediction
+│       ├── cost_forecast/      # Artifact-based processing-cost prediction
 │       ├── tpv_forecast/       # Conformal TPV prediction
 │       ├── knn_rate_quote/     # KNN-based rate quotation
 │       ├── rate_optimisation/  # Rate optimisation engine
@@ -601,7 +601,7 @@ graph TB
 └── archive/                    # Archived dead/legacy code
     ├── backend/errors.py
     ├── ml_service/
-    │   ├── modules/{cluster_assignment, cluster_generation, m9_forecast}/
+    │   ├── modules/{cluster_assignment, cluster_generation, proc_cost_forecast}/
     │   ├── modules/cost_forecast/*_sarima_legacy.py
     │   └── migrate_sqlite_to_postgres.py
     ├── ml_pipeline/            # Training notebooks, EDA, Matt_EDA services
@@ -751,7 +751,7 @@ flowchart LR
         direction TB
         K["① getCompositeMerchant\nKNN → 5 nearest peer merchants\n→ composite merchant profile"]
         T["② GetTPVForecast\nConformal prediction\n→ monthly TPV estimate"]
-        C["③ GetCostForecast\nM9 v2 trained artifacts\n→ 3-month cost % bands"]
+        C["③ GetCostForecast\nproc_cost trained artifacts\n→ 3-month cost % bands"]
         P["④ GetProfitForecast\nMonte Carlo · 10 000 sims\nuses rate + fixed_fee + TPV + cost\n→ P50 / P90 profit range"]
         K --> T --> C --> P
     end
@@ -812,7 +812,7 @@ flowchart LR
         direction TB
         K["① getCompositeMerchant\nKNN → 5 nearest peer merchants\n→ composite merchant profile"]
         T["② GetTPVForecast\nConformal prediction\n→ monthly TPV estimate"]
-        C["③ GetCostForecast\nM9 v2 trained artifacts\n→ 3-month cost % bands"]
+        C["③ GetCostForecast\nproc_cost trained artifacts\n→ 3-month cost % bands"]
         P["④ GetProfitForecast\nMonte Carlo · 10 000 sims\nuses rate + fixed_fee + TPV + cost\n→ P50 / P90 profit range"]
         K --> T --> C --> P
     end

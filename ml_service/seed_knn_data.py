@@ -37,10 +37,10 @@ def seed_knn_transactions(database_url: str | None = None) -> bool:
 
     Returns True if data was seeded, False if skipped (already populated).
     """
-    db_url = database_url or os.environ.get(
-        "DATABASE_URL",
-        "postgresql://pguser:pgpassword@postgres:5432/mldb",
-    )
+    db_url = database_url or os.environ.get("DATABASE_URL")
+    if not db_url:
+        logger.error("[KNN Seed] DATABASE_URL is not set — skipping seed")
+        return False
     csv_path = os.environ.get("KNN_SEED_CSV_PATH", DEFAULT_CSV_PATH)
 
     if not os.path.isfile(csv_path):

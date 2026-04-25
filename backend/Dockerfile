@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose the uvicorn port
-EXPOSE 8000
+EXPOSE ${BACKEND_PORT:-8000}
 
 # Default command (overridden by docker-compose with --reload for dev)
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD uvicorn app:app --host 0.0.0.0 --port ${BACKEND_PORT:-8000}

@@ -238,25 +238,25 @@ async def get_composite_merchant_endpoint(payload: CompositeMerchantRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.get("/cost-forecast/health", tags=["Cost Forecast Service (M9 v2)"])
+@router.get("/cost-forecast/health", tags=["Cost Forecast Service"])
 async def cost_forecast_health_endpoint():
-    """Health check for the M9 v2 cost forecast container."""
+    """Health check for the processing-cost forecast service."""
     try:
         return await get_cost_forecast_health()
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"M9 service unreachable: {exc}")
+        raise HTTPException(status_code=503, detail=f"Cost forecast service unreachable: {exc}")
 
 
 # ── Weekly → Monthly translation for legacy pipeline callers ──────────────────
 
-def _weekly_features_to_m9_request(body: dict) -> CostForecastRequest:
+def _weekly_features_to_cost_request(body: dict) -> CostForecastRequest:
     """
     Convert old pipeline format (composite_weekly_features + onboarding rows)
-    to an M9 v2 CostForecastRequest.
+    to a CostForecastRequest.
 
     The backend's MerchantQuoteService.run_ml_forecast_pipeline still sends
     the legacy SARIMA-era payload shape.  This function bridges the gap so
-    the M9 container can serve those requests transparently.
+    the cost forecast service can serve those requests transparently.
     """
     weekly_features = body.get("composite_weekly_features", [])
     mcc = int(body.get("mcc", 5411))
@@ -329,15 +329,15 @@ def _weekly_features_to_m9_request(body: dict) -> CostForecastRequest:
     return req
 
 
-def _m9_response_to_legacy(m9_resp: dict) -> dict:
+def _cost_response_to_legacy(cost_resp: dict) -> dict:
     """
-    Translate M9 v2 monthly response → 12 weekly legacy format.
+    Translate processing-cost monthly response → 12 weekly legacy format.
 
     Each of the 3 monthly forecasts is expanded into 4 weekly points
     via linear interpolation, matching the old SARIMA 12-week horizon.
     """
     monthly = sorted(
-        m9_resp.get("forecast", []),
+        cost_resp.get("forecast", []),
         key=lambda fm: fm.get("month_index", 0),
     )
 
@@ -367,15 +367,15 @@ def _m9_response_to_legacy(m9_resp: dict) -> dict:
 
     return {
         "forecast": weekly_forecast,
-        "conformal_metadata": m9_resp.get("conformal_metadata"),
-        "process_metadata":   m9_resp.get("process_metadata"),
+        "conformal_metadata": cost_resp.get("conformal_metadata"),
+        "process_metadata":   cost_resp.get("process_metadata"),
     }
 
 
 def _cost_forecast_fallback_from_weekly(body: dict) -> dict | None:
     """
     Simple fallback cost forecast derived from the backend's base cost rate
-    (from cost-structure JSONs) when M9 v2 has no trained artifacts.
+    (from cost-structure JSONs) when the cost forecast has no trained artifacts.
 
     If a base_cost_rate is supplied by the caller it is used directly,
     giving a realistic ~1-3 % cost percentage.  Otherwise falls back to
@@ -389,7 +389,7 @@ def _cost_forecast_fallback_from_weekly(body: dict) -> dict | None:
 
     # Prefer the authoritative base_cost_rate from the backend's
     # cost-structure JSON calculation (a decimal, e.g. 0.0141 = 1.41%).
-    # Convert to percentage-scale to match M9 output convention.
+    # Convert to percentage-scale to match proc_cost output convention.
     base_cost_rate = body.get("base_cost_rate")
 
     if base_cost_rate is not None and base_cost_rate > 0:
@@ -455,21 +455,21 @@ def _cost_forecast_fallback_from_weekly(body: dict) -> dict | None:
     }
 
 
-@router.post("/GetCostForecast", tags=["Cost Forecast Service (M9 v2)"])
+@router.post("/GetCostForecast", tags=["Cost Forecast Service"])
 async def get_cost_forecast_endpoint(request: Request):
     """
-    Monthly processing-cost forecast (M9 v2).
+    Monthly processing-cost forecast.
 
     Accepts BOTH:
-      • M9 v2 native format  (context_months, pool_mean_at_context_end, …)
+      • Native format  (context_months, pool_mean_at_context_end, …)
       • Legacy pipeline format (composite_weekly_features, onboarding_merchant_txn_df, mcc)
 
     When the legacy format is detected the weekly features are aggregated
-    into monthly buckets and forwarded to the M9 container.  The response
+    into monthly buckets and forwarded to the cost forecast service.  The response
     is then re-mapped to the legacy field names so the backend routes work
     without changes.
 
-    Falls back to a simple KNN-neighbour-mean estimate when M9 has no
+    Falls back to a simple KNN-neighbour-mean estimate when no
     trained artifacts (degraded mode).
 
     ── WHERE TO EDIT: ml_pipeline/Matt_EDA/services/GetAvgProcCostForecast Service v2/
@@ -479,16 +479,16 @@ async def get_cost_forecast_endpoint(request: Request):
 
     try:
         if is_legacy:
-            m9_request = _weekly_features_to_m9_request(body)
+            cost_request = _weekly_features_to_cost_request(body)
         else:
-            m9_request = CostForecastRequest(**body)
+            cost_request = CostForecastRequest(**body)
 
-        m9_result = await run_cost_forecast(m9_request)
+        cost_result = await run_cost_forecast(cost_request)
 
         # Return monthly forecast directly (3 months, no weekly expansion)
-        return m9_result
+        return cost_result
     except Exception as exc:
-        # If M9 is in degraded mode, fall back to KNN-neighbour-mean cost estimate
+        # If cost forecast is in degraded mode, fall back to KNN-neighbour-mean cost estimate
         if is_legacy:
             fallback = _cost_forecast_fallback_from_weekly(body)
             if fallback is not None:
@@ -506,7 +506,7 @@ def _weekly_features_to_tpv_request(body: dict) -> dict:
     Convert legacy weekly-features payload → TpvForecastRequest (monthly context).
 
     Groups the composite_weekly_features rows into calendar-month buckets
-    (same approximation used by the M9 converter) and computes:
+    (same approximation used by the cost request converter) and computes:
       • total_payment_volume  = mean(weekly TPV) × 4.33  [monthly dollar estimate]
       • transaction_count     = round(mean(weekly txn count) × 4.33)
       • avg_transaction_value = mean(weekly avg txn value)

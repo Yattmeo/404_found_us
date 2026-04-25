@@ -1,5 +1,5 @@
 """
-Embedded M9 v2 cost forecast inference engine for ml_service.
+Embedded processing-cost forecast inference engine for ml_service.
 
 Loads trained HuberRegressor + GBR risk-stratified conformal artifacts
 from disk and runs inference directly inside ml_service — no separate
@@ -29,7 +29,7 @@ from sklearn.preprocessing import StandardScaler
 from .config import (
     ARTIFACT_POLL_INTERVAL_S,
     HORIZON_LEN,
-    M9_ARTIFACTS_BASE_PATH,
+    PROC_COST_ARTIFACTS_BASE_PATH,
     MIN_POOL,
     SUPPORTED_CONTEXT_LENS,
     SUPPORTED_MCCS,
@@ -99,7 +99,7 @@ class ArtifactBundle:
 # ---------------------------------------------------------------------------
 
 def _artifact_dir(mcc: int, ctx_len: int) -> Path:
-    return M9_ARTIFACTS_BASE_PATH / str(mcc) / str(ctx_len)
+    return PROC_COST_ARTIFACTS_BASE_PATH / str(mcc) / str(ctx_len)
 
 
 def _load_bundle(mcc: int, ctx_len: int) -> ArtifactBundle:
@@ -156,7 +156,7 @@ def initialize() -> None:
             d = _artifact_dir(mcc, ctx_len)
             if not (d / "config_snapshot.json").exists():
                 print(
-                    f"[M9Cost] No artifacts for MCC {mcc} ctx={ctx_len} at {d} — skipping"
+                    f"[ProcCost] No artifacts for MCC {mcc} ctx={ctx_len} at {d} — skipping"
                 )
                 continue
             try:
@@ -165,13 +165,13 @@ def initialize() -> None:
                     _ARTIFACT_CACHE[(mcc, ctx_len)] = bundle
                 loaded += 1
                 print(
-                    f"[M9Cost] Loaded MCC {mcc} ctx={ctx_len}  "
+                    f"[ProcCost] Loaded MCC {mcc} ctx={ctx_len}  "
                     f"trained_at={bundle.trained_at}  strat={bundle.strat_enabled}"
                 )
             except Exception as exc:
-                print(f"[M9Cost] WARNING: failed to load MCC {mcc} ctx={ctx_len}: {exc}")
+                print(f"[ProcCost] WARNING: failed to load MCC {mcc} ctx={ctx_len}: {exc}")
     if loaded == 0:
-        print("[M9Cost] No artifacts loaded — service will use fallback mode.")
+        print("[ProcCost] No artifacts loaded — service will use fallback mode.")
     else:
         start_artifact_watcher()
 
@@ -189,13 +189,13 @@ def _poll_artifacts() -> None:
                     bundle = _load_bundle(mcc, ctx_len)
                     with _CACHE_LOCK:
                         _ARTIFACT_CACHE[(mcc, ctx_len)] = bundle
-                    print(f"[M9Cost] Hot-reloaded MCC {mcc} ctx={ctx_len}")
+                    print(f"[ProcCost] Hot-reloaded MCC {mcc} ctx={ctx_len}")
             except Exception as exc:
-                print(f"[M9Cost] WARNING: artifact reload failed: {exc}")
+                print(f"[ProcCost] WARNING: artifact reload failed: {exc}")
 
 
 def start_artifact_watcher() -> None:
-    t = threading.Thread(target=_poll_artifacts, daemon=True, name="m9-artifact-watcher")
+    t = threading.Thread(target=_poll_artifacts, daemon=True, name="proc-cost-artifact-watcher")
     t.start()
 
 
@@ -234,7 +234,7 @@ def _resolve_bundle(mcc: int, ctx_len: int) -> ArtifactBundle:
 
 
 # ---------------------------------------------------------------------------
-# Feature engineering (matches M9 v2 training features exactly)
+# Feature engineering (matches proc_cost training features exactly)
 # ---------------------------------------------------------------------------
 
 def _build_feature_vector(
@@ -340,9 +340,9 @@ def _compute_conformal_hw(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def get_m9_monthly_cost_forecast(req: CostForecastRequest) -> dict:
+def get_proc_cost_monthly_forecast(req: CostForecastRequest) -> dict:
     """
-    Run M9 v2 inference on pre-aggregated monthly context.
+    Run processing-cost inference on pre-aggregated monthly context.
 
     Returns a dict with keys: forecast, conformal_metadata, process_metadata.
     forecast is a list of monthly items (3 months), NOT weekly.
@@ -351,8 +351,8 @@ def get_m9_monthly_cost_forecast(req: CostForecastRequest) -> dict:
 
     if not _ARTIFACT_CACHE:
         raise RuntimeError(
-            "M9 cost forecast artifacts not loaded. "
-            "Either train.py has not been run or M9_ARTIFACTS_BASE_PATH is misconfigured."
+            "Processing cost forecast artifacts not loaded. "
+            "Either train.py has not been run or PROC_COST_ARTIFACTS_BASE_PATH is misconfigured."
         )
 
     # Convert ContextMonth → _MonthSummary
@@ -421,7 +421,7 @@ def get_m9_monthly_cost_forecast(req: CostForecastRequest) -> dict:
             "momentum": momentum,
             "pool_mean_used": knn_pool_mean,
             "mcc": req.mcc,
-            "model_variant": "m9_v2_embedded",
+            "model_variant": "proc_cost_embedded",
             "horizon_months": horizon,
             "confidence_interval": req.confidence_interval,
             "generated_at_utc": generated_at.isoformat(),
@@ -431,7 +431,7 @@ def get_m9_monthly_cost_forecast(req: CostForecastRequest) -> dict:
     }
 
 
-def get_m9_health() -> dict:
+def get_proc_cost_health() -> dict:
     """Return artifact status (no HTTP call needed)."""
     with _CACHE_LOCK:
         loaded = [

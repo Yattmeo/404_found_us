@@ -1,11 +1,14 @@
-﻿services:
+﻿# Load all secrets from .env (copy .env.example → .env and fill in values)
+# Never commit .env to version control.
+
+services:
   postgres:
     image: postgres:16
     container_name: ml-postgres
     environment:
-      - POSTGRES_USER=pguser
-      - POSTGRES_PASSWORD=pgpassword
-      - POSTGRES_DB=mldb
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
@@ -19,12 +22,15 @@
       context: ./backend
       dockerfile: Dockerfile
     container_name: ml-backend
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://pguser:pgpassword@postgres:5432/mldb
-      - COST_STRUCTURE_DIR=/app/cost_structure
-      - ML_SERVICE_URL=http://ml-service:8001
+      - DATABASE_URL=${DATABASE_URL}
+      - COST_STRUCTURE_DIR=${COST_STRUCTURE_DIR}
+      - ML_SERVICE_URL=${ML_SERVICE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - BACKEND_PORT=${BACKEND_PORT}
     volumes:
-      - ./backend:/app
       - ./cost_structure:/app/cost_structure:ro
     depends_on:
       - postgres
@@ -38,11 +44,7 @@
       dockerfile: Dockerfile
     container_name: ml-frontend
     environment:
-      - REACT_APP_BACKEND_URL=http://localhost/api/v1
-      - PUBLIC_URL=/sales
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - FRONTEND_PORT=${FRONTEND_PORT}
     depends_on:
       - backend
     restart: unless-stopped
@@ -54,6 +56,8 @@
       context: ./merchant-frontend
       dockerfile: Dockerfile
     container_name: ml-merchant-frontend
+    environment:
+      - MERCHANT_PORT=${MERCHANT_PORT}
     depends_on:
       - backend
     restart: unless-stopped
@@ -64,9 +68,15 @@
     image: nginx:alpine
     container_name: ml-nginx
     ports:
-      - "80:80"
+      - "${NGINX_PORT}:${NGINX_PORT}"
+    environment:
+      - NGINX_PORT=${NGINX_PORT}
+      - BACKEND_PORT=${BACKEND_PORT}
+      - ML_PORT=${ML_PORT}
+      - FRONTEND_PORT=${FRONTEND_PORT}
+      - MERCHANT_PORT=${MERCHANT_PORT}
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template
     depends_on:
       - backend
       - frontend
@@ -81,13 +91,17 @@
       context: ./ml_service
       dockerfile: Dockerfile
     container_name: ml-service
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://pguser:pgpassword@postgres:5432/mldb
-      - M9_ARTIFACTS_BASE_PATH=/app/artifacts/m9
-      - TPV_ARTIFACTS_BASE_PATH=/app/artifacts/tpv
+      - DATABASE_URL=${DATABASE_URL}
+      - PROC_COST_ARTIFACTS_BASE_PATH=${PROC_COST_ARTIFACTS_BASE_PATH}
+      - TPV_ARTIFACTS_BASE_PATH=${TPV_ARTIFACTS_BASE_PATH}
+      - KNN_SEED_CSV_PATH=${KNN_SEED_CSV_PATH}
+      - ML_PORT=${ML_PORT}
     volumes:
-      - ./ml_service:/app
-      - ./ml_pipeline/Matt_EDA/services/KNN Quote Service Production/processed_transactions_4mcc.csv:/data/processed_transactions_4mcc.csv:ro
+      # KNN seed data: place processed_transactions_4mcc.csv in ml_service/data/
+      # The service will start in degraded mode (no KNN) if the file is absent.
+      - ./ml_service/data/knn_seed.csv:/data/knn_seed.csv:ro
     depends_on:
       - postgres
     restart: unless-stopped

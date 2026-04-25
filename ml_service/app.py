@@ -40,22 +40,21 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("[KNN Seed] Seeding skipped: %s", exc)
 
-    # Initialize M9 cost forecast artifacts (graceful — warns if missing)
+    # Initialize processing-cost forecast artifacts (graceful — warns if missing)
     try:
-        from modules.cost_forecast.service import initialize as init_m9
-        init_m9()
+        from modules.cost_forecast.service import initialize as init_proc_cost
+        init_proc_cost()
     except Exception as exc:
-        logger.warning("[M9Cost] Initialization skipped: %s", exc)
+        logger.warning("[ProcCost] Initialization skipped: %s", exc)
 
     # Initialize TPV forecast artifacts (graceful — does not crash if missing)
     try:
         from modules.tpv_forecast.service import initialize as init_tpv, set_repository
         from modules.tpv_forecast.repository import SQLAlchemyMerchantRepository
 
-        db_url = os.environ.get(
-            "DATABASE_URL",
-            "postgresql://pguser:pgpassword@postgres:5432/mldb",
-        )
+        db_url = os.environ.get("DATABASE_URL")
+        if not db_url:
+            raise ValueError("DATABASE_URL environment variable is not set")
         repo = SQLAlchemyMerchantRepository(connection_string=db_url)
         set_repository(repo)
         init_tpv()
@@ -84,7 +83,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )

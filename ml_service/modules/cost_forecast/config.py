@@ -1,5 +1,5 @@
 """
-Configuration for the embedded M9 v2 cost forecast module.
+Configuration for the embedded processing-cost forecast module.
 
 All pipeline constants mirror those used at training time so inference
 and training always share the same values.
@@ -12,8 +12,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Artifact storage — override via env var for Docker usage
 # ---------------------------------------------------------------------------
-M9_ARTIFACTS_BASE_PATH: Path = Path(
-    os.getenv("M9_ARTIFACTS_BASE_PATH", str(Path(__file__).parent.parent.parent / "artifacts" / "m9"))
+PROC_COST_ARTIFACTS_BASE_PATH: Path = Path(
+    os.getenv("PROC_COST_ARTIFACTS_BASE_PATH", str(Path(__file__).parent.parent.parent / "artifacts" / "proc_cost"))
 )
 
 # ---------------------------------------------------------------------------

@@ -88,7 +88,7 @@ The `/calculations/desired-margin-details` endpoint orchestrates 4 sequential ca
 
 1. `POST /ml/getCompositeMerchant` — KNN: find 5 nearest merchants
 2. `POST /ml/GetTPVForecast` — conformal monthly TPV prediction
-3. `POST /ml/GetCostForecast` — M9 v2 3-month cost forecast
+3. `POST /ml/GetCostForecast` — 3-month processing-cost forecast
 4. `POST /ml/GetProfitForecast` — Monte Carlo profit simulation
 
 The `/calculations/transaction-costs` endpoint also triggers a background `POST /ml/process` call (rate optimisation + TPV prediction + KNN engines).

@@ -9,7 +9,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL: str = os.getenv(
     "DATABASE_URL",
-    "postgresql://pguser:pgpassword@localhost:5432/mldb",
+    "postgresql://pguser:pgpassword@localhost:5432/mldb",  # local dev fallback only
 )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)

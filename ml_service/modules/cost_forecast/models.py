@@ -1,5 +1,5 @@
 """
-Pydantic request/response models for the M9 v2 cost forecast module.
+Pydantic request/response models for the processing-cost forecast module.
 
 Replaces the previous SARIMA-based models (preserved in models_sarima_legacy.py).
 These mirror the contracts of the standalone GetAvgProcCostForecast Service v2.
@@ -29,7 +29,7 @@ class ContextMonth(BaseModel):
 
 class CostForecastRequest(BaseModel):
     """
-    M9 v2 monthly processing-cost forecast request.
+    Monthly processing-cost forecast request.
 
     Replaces the old SARIMA CostForecastRequest. The endpoint name
     /ml/GetCostForecast is preserved for backward compatibility.
@@ -68,7 +68,7 @@ class ProcessMetadata(BaseModel):
     momentum: float
     pool_mean_used: float
     mcc: int
-    model_variant: str = "m9_v2"
+    model_variant: str = "proc_cost"
     horizon_months: int
     confidence_interval: float
     generated_at_utc: str

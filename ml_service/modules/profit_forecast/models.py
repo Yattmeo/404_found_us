@@ -69,7 +69,7 @@ class ProfitForecastRequest(BaseModel):
         ..., description="Full JSON response from POST /GetTPVForecast.",
     )
     cost_service_output: CostServiceOutput = Field(
-        ..., description="Full JSON response from POST /GetM9MonthlyCostForecast.",
+        ..., description="Full JSON response from POST /GetCostForecast.",
     )
     fee_rate: float = Field(
         ..., gt=0.0, lt=1.0,

@@ -293,7 +293,7 @@ const EnhancedMerchantFeeCalculator = ({ onBackToLanding }) => {
       const currentRateValue = hasCurrentRate ? parseFloat(data.currentRate) / 100 : null;
 
       // Always use the desired-margin-details endpoint so that ML
-      // forecasting (M9 cost forecast + SARIMA volume forecast) is
+      // forecasting (processing-cost forecast + SARIMA volume forecast) is
       // available for both the profitability calculator and quotation tool.
       const quotePayload = {
         mcc: data.mcc,
